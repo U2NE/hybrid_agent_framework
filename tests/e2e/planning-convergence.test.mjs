@@ -14,6 +14,7 @@ test('Tier 0/1 do not run consensus planning', () => {
     enabled: false,
     maxIterations: 0,
     deliberate: false,
+    requiredReviewers: [],
   });
   assert.equal(consensusPolicy({ tier: 1 }).enabled, false);
 });
@@ -57,8 +58,9 @@ test('high-risk consensus is bounded at 5 and approval remains pending user appr
 
   state = recordConsensusReview(state, {
     plan: { revision: 1 },
-    architect: { objections: [] },
-    auditor: { verdict: 'APPROVE' },
+    planRevision: 1,
+    architect: { verdict: 'APPROVE', revision: 1, objections: [] },
+    auditor: { verdict: 'APPROVE', revision: 1 },
   });
 
   assert.equal(state.status, 'pending-user-approval');
@@ -70,18 +72,102 @@ test('high-risk consensus is bounded at 5 and approval remains pending user appr
   assert.equal(approved.executionApproved, true);
 });
 
+test('enabled council records Architect and Plan Auditor as required reviewers', () => {
+  const state = createConsensusState({ tier: 2, enabled: true });
+  assert.deepEqual(state.policy.requiredReviewers, ['architect', 'plan-auditor']);
+});
+
+test('council requires both Architect and Plan Auditor APPROVE', () => {
+  let state = createConsensusState({ tier: 2, enabled: true });
+
+  state = recordConsensusReview(state, {
+    plan: { revision: 1 },
+    planRevision: 1,
+    architect: { verdict: 'APPROVE', revision: 1 },
+    auditor: { verdict: 'APPROVE', revision: 1 },
+  });
+
+  assert.equal(state.status, 'pending-user-approval');
+  assert.equal(state.approved, true);
+  assert.equal(state.executionApproved, false);
+});
+
+test('missing Architect cannot approve a council plan', () => {
+  const state = createConsensusState({ tier: 2, enabled: true });
+
+  assert.throws(
+    () =>
+      recordConsensusReview(state, {
+        plan: { revision: 1 },
+        planRevision: 1,
+        auditor: { verdict: 'APPROVE', revision: 1 },
+      }),
+    /required consensus reviewer missing: architect/
+  );
+});
+
+test('missing Plan Auditor cannot approve a council plan', () => {
+  const state = createConsensusState({ tier: 2, enabled: true });
+
+  assert.throws(
+    () =>
+      recordConsensusReview(state, {
+        plan: { revision: 1 },
+        planRevision: 1,
+        architect: { verdict: 'APPROVE', revision: 1 },
+      }),
+    /required consensus reviewer missing: plan-auditor/
+  );
+});
+
+test('review revision metadata must match the current plan revision when provided', () => {
+  const state = createConsensusState({ tier: 2, enabled: true });
+
+  assert.throws(
+    () =>
+      recordConsensusReview(state, {
+        plan: { revision: 2 },
+        planRevision: 2,
+        architect: { verdict: 'APPROVE', revision: 1 },
+        auditor: { verdict: 'APPROVE', revision: 2 },
+      }),
+    /architect review revision mismatch/
+  );
+});
+
+test('explicit Plan Auditor-only consensus can approve without Architect', () => {
+  let state = createConsensusState({
+    tier: 2,
+    enabled: true,
+    requiredReviewers: ['plan-auditor'],
+  });
+
+  state = recordConsensusReview(state, {
+    plan: { revision: 1 },
+    planRevision: 1,
+    auditor: { verdict: 'APPROVE', revision: 1 },
+  });
+
+  assert.deepEqual(state.policy.requiredReviewers, ['plan-auditor']);
+  assert.equal(state.status, 'pending-user-approval');
+  assert.equal(state.approved, true);
+});
+
 test('architect ITERATE blocks approval when council review is active', () => {
   let state = createConsensusState({ tier: 2, enabled: true });
 
   state = recordConsensusReview(state, {
     plan: { revision: 1 },
+    planRevision: 1,
     architect: {
       verdict: 'ITERATE',
+      revision: 1,
       findings: ['rollback isolation still incomplete'],
       objections: ['rollback verification mutates final state'],
     },
     auditor: {
       verdict: 'APPROVE',
+      revision: 1,
       findings: [],
       objections: [],
     },

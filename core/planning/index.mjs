@@ -178,13 +178,26 @@ export function consensusPolicy(options = {}) {
     tier >= 3;
 
   if (tier <= 1) {
-    return { enabled: false, maxIterations: 0, deliberate: false };
+    return {
+      enabled: false,
+      maxIterations: 0,
+      deliberate: false,
+      requiredReviewers: [],
+    };
   }
 
+  const enabled = options.enabled !== false;
+  const requiredReviewers = enabled
+    ? normalizeRequiredReviewers(
+        options.requiredReviewers ?? ['architect', 'plan-auditor']
+      )
+    : [];
+
   return {
-    enabled: options.enabled !== false,
+    enabled,
     maxIterations: highRisk ? 5 : 3,
     deliberate: highRisk,
+    requiredReviewers,
   };
 }
 
@@ -211,21 +224,63 @@ export function recordConsensusReview(state, input = {}) {
     throw new PlanError('consensus review is already terminal');
   }
 
-  const auditorVerdict = normalizeReviewVerdict(input.auditor?.verdict || input.verdict);
-  const architectVerdict = input.architect?.verdict
+  const requiredReviewers = normalizeRequiredReviewers(
+    state.policy.requiredReviewers ?? ['architect', 'plan-auditor']
+  );
+  const nextIteration = state.iteration + 1;
+  const planRevision = Number(input.planRevision ?? nextIteration);
+  if (!Number.isInteger(planRevision) || planRevision < 1) {
+    throw new PlanError('planRevision must be a positive integer');
+  }
+
+  const architectPresent = Boolean(input.architect?.verdict);
+  const auditorPresent = Boolean(input.auditor?.verdict || input.verdict);
+  const architectVerdict = architectPresent
     ? normalizeReviewVerdict(input.architect.verdict)
     : null;
+  const auditorVerdict = auditorPresent
+    ? normalizeReviewVerdict(input.auditor?.verdict || input.verdict)
+    : null;
+
+  validateReviewRevision('architect', input.architect, planRevision);
+  validateReviewRevision('plan-auditor', input.auditor, planRevision);
+
+  const reviews = {
+    architect: { present: architectPresent, verdict: architectVerdict },
+    'plan-auditor': { present: auditorPresent, verdict: auditorVerdict },
+  };
+  const missingRequired = requiredReviewers.filter(
+    (reviewer) => !reviews[reviewer]?.present
+  );
+  const suppliedVerdicts = [architectVerdict, auditorVerdict].filter(Boolean);
+  const approvalAttempt =
+    suppliedVerdicts.length > 0 &&
+    suppliedVerdicts.every((verdict) => verdict === 'APPROVE');
+
+  if (approvalAttempt && missingRequired.length) {
+    throw new PlanError(
+      'required consensus reviewer missing: ' + missingRequired.join(', ')
+    );
+  }
+
   const councilApproved =
-    auditorVerdict === 'APPROVE' &&
-    (architectVerdict == null || architectVerdict === 'APPROVE');
+    requiredReviewers.length > 0 &&
+    requiredReviewers.every(
+      (reviewer) =>
+        reviews[reviewer]?.present === true &&
+        reviews[reviewer]?.verdict === 'APPROVE'
+    );
+
   const next = structuredClone(state);
-  next.iteration += 1;
+  next.iteration = nextIteration;
   next.bestPlan = input.plan || next.bestPlan;
   next.history.push({
     iteration: next.iteration,
-    planRevision: input.planRevision || next.iteration,
+    planRevision,
     architect: normalizeReview(input.architect),
-    auditor: normalizeReview(input.auditor || { verdict: auditorVerdict }),
+    auditor: normalizeReview(
+      input.auditor || (auditorPresent ? { verdict: auditorVerdict } : {})
+    ),
   });
 
   const objections = [
@@ -331,6 +386,40 @@ export function buildPlanAcceptanceCoverage(plan, acceptanceCriteria = []) {
     coverage,
     missing: coverage.filter((item) => !item.planned),
   };
+}
+
+function normalizeRequiredReviewers(value) {
+  const reviewers = (Array.isArray(value) ? value : [])
+    .map(String)
+    .map((reviewer) => reviewer.trim().toLowerCase())
+    .filter(Boolean);
+  const allowed = new Set(['architect', 'plan-auditor']);
+
+  for (const reviewer of reviewers) {
+    if (!allowed.has(reviewer)) {
+      throw new PlanError('unsupported consensus reviewer: ' + reviewer);
+    }
+  }
+
+  const normalized = [...new Set(reviewers)];
+  if (!normalized.length) {
+    throw new PlanError('enabled consensus requires at least one required reviewer');
+  }
+  return normalized;
+}
+
+function validateReviewRevision(role, review, planRevision) {
+  if (review?.revision == null) return;
+  const reviewRevision = Number(review.revision);
+  if (!Number.isInteger(reviewRevision) || reviewRevision !== planRevision) {
+    throw new PlanError(
+      role +
+        ' review revision mismatch: expected ' +
+        planRevision +
+        ', received ' +
+        String(review.revision)
+    );
+  }
 }
 
 function normalizeReviewVerdict(value) {
