@@ -18,6 +18,7 @@ node scripts/runtime-smoke.mjs --live A
 node scripts/runtime-smoke.mjs --live B
 node scripts/runtime-smoke.mjs --live C
 npm run smoke:worktree:live
+npm run smoke:planning:live
 ```
 
 Each live run creates an isolated temporary Git repository, installs Hybrid, invokes `codex exec --json`, and preserves the event log under the temporary workspace's `.planning/runtime-smoke/`.
@@ -76,3 +77,9 @@ A successful file edit alone does not prove orchestration. Review `events.jsonl`
 ## Case E — real worktree isolation
 
 `npm run smoke:worktree:live` forces a two-writer wave into worktree mode. PASS requires filesystem/Git/runtime evidence rather than worker self-report: two real detached worktrees, distinct worker cwd paths, overlapping authenticated workers, owned Git patches, successful main-workspace integration, fresh verifier command evidence, cleanup of the temporary worktrees, and a final `git worktree list` containing only the main workspace. Integration conflict and ownership escape are fail-closed deterministic regressions.
+
+## Case F — bounded planning consensus convergence
+
+`npm run smoke:planning:live` creates a disposable planning fixture whose revision 1 has one real acceptance-coverage gap. Planner produces the immutable plan revision; Architect and Plan Auditor independently review the same exact-byte SHA256 snapshot in read-only mode; any non-APPROVE council verdict returns the findings to Planner for a new revision. The loop is bounded by the normal complex-planning limit.
+
+PASS requires a real initial objection, deterministic SPEC coverage on the corrected plan, identical revision hashes for both reviewers, overlapping independent review intervals, no recursive delegation, both final reviewers returning APPROVE on the same revision, a clean planning repository, and a final state of `pending-user-approval` with `executionApproved=false`.

@@ -4,7 +4,7 @@
 
 Hybrid does not run consensus planning for Tier 0/1.
 
-Tier 2 uses Planner by default. Architect and Plan Auditor are added only for real architecture/security/risk. When council review is active, a rejection returns to Planner revision and then to independent Architect/Auditor review. Ordinary complex convergence is bounded to 3 iterations.
+Tier 2 uses Planner by default. Architect and Plan Auditor are added only for real architecture/security/risk. When council review is active, any non-APPROVE council verdict returns to Planner revision and then to independent Architect/Auditor review; both reviewers must APPROVE the same fixed revision before the plan can become pending user approval. Ordinary complex convergence is bounded to 3 iterations.
 
 Tier 3/high-risk uses the same closed loop with a maximum of 5 iterations. At the cap without approval, Hybrid retains the best plan and remaining objections, records `consensus-not-reached`, and does not execute.
 

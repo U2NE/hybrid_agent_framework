@@ -174,7 +174,13 @@ export function recordConsensusReview(state, input = {}) {
     throw new PlanError('consensus review is already terminal');
   }
 
-  const verdict = normalizeReviewVerdict(input.auditor?.verdict || input.verdict);
+  const auditorVerdict = normalizeReviewVerdict(input.auditor?.verdict || input.verdict);
+  const architectVerdict = input.architect?.verdict
+    ? normalizeReviewVerdict(input.architect.verdict)
+    : null;
+  const councilApproved =
+    auditorVerdict === 'APPROVE' &&
+    (architectVerdict == null || architectVerdict === 'APPROVE');
   const next = structuredClone(state);
   next.iteration += 1;
   next.bestPlan = input.plan || next.bestPlan;
@@ -182,17 +188,18 @@ export function recordConsensusReview(state, input = {}) {
     iteration: next.iteration,
     planRevision: input.planRevision || next.iteration,
     architect: normalizeReview(input.architect),
-    auditor: normalizeReview(input.auditor || { verdict }),
+    auditor: normalizeReview(input.auditor || { verdict: auditorVerdict }),
   });
 
   const objections = [
     ...(input.architect?.objections || []),
+    ...(input.architect?.findings || []),
     ...(input.auditor?.objections || []),
     ...(input.auditor?.findings || []),
   ].map(String).filter(Boolean);
   next.remainingObjections = [...new Set(objections)];
 
-  if (verdict === 'APPROVE') {
+  if (councilApproved) {
     next.status = 'pending-user-approval';
     next.approved = true;
     next.executionApproved = false;

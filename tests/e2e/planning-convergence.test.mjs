@@ -70,6 +70,29 @@ test('high-risk consensus is bounded at 5 and approval remains pending user appr
   assert.equal(approved.executionApproved, true);
 });
 
+test('architect ITERATE blocks approval when council review is active', () => {
+  let state = createConsensusState({ tier: 2, enabled: true });
+
+  state = recordConsensusReview(state, {
+    plan: { revision: 1 },
+    architect: {
+      verdict: 'ITERATE',
+      findings: ['rollback isolation still incomplete'],
+      objections: ['rollback verification mutates final state'],
+    },
+    auditor: {
+      verdict: 'APPROVE',
+      findings: [],
+      objections: [],
+    },
+  });
+
+  assert.equal(state.status, 'revision-required');
+  assert.equal(state.approved, false);
+  assert.equal(state.executionApproved, false);
+  assert.ok(state.remainingObjections.some((item) => /rollback isolation/i.test(item)));
+});
+
 test('cannot mark rejected or capped consensus as execution approved', () => {
   let state = createConsensusState({ tier: 2, enabled: true });
   state = recordConsensusReview(state, {

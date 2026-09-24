@@ -92,6 +92,24 @@ The deterministic bridge tests also prove ownership escape is rejected before in
 
 This is a disposable smoke repository, not a claim that an arbitrary production repository merge is risk-free.
 
+### Case F — bounded planning consensus convergence
+
+Authenticated semantic PASS.
+
+The smoke began from a plan with a deterministic SPEC coverage defect: the rollback acceptance criterion had no task. It then exercised the real bounded consensus loop:
+
+- Planner produced revision 1.
+- Architect and Plan Auditor reviewed the same committed revision-1 file bytes independently and concurrently, with the exact SHA256 bound into both reviews.
+- Both reviewers returned `ITERATE` for the real rollback omission; neither modified the plan or delegated.
+- Planner alone synthesized both reviews into revision 2.
+- Revision 2 mapped every SPEC acceptance criterion verbatim, added the isolated rollback task, exact file ownership, automated verification, and dependencies on both v2 behavior tasks.
+- Architect and Plan Auditor independently reviewed the same revision-2 hash and both returned `APPROVE` with no findings.
+- Consensus ended at `pending-user-approval` with `approved=true`, `executionApproved=false`, no remaining objections, and a clean disposable repository.
+
+The deterministic tests additionally prove that exit-zero/fake-success reports are rejected, immutable revision/hash mismatches are rejected, and an Architect `ITERATE` blocks approval even when the Auditor approves.
+
+This validates convergence semantics, not permission to execute the resulting plan.
+
 ## Still intentionally pending
 
 ### Case D — real user-interactive clarification
