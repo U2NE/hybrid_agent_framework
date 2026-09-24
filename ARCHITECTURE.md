@@ -20,11 +20,15 @@
 - `requirements`: weighted clarity gate and edge probes.
 - `planning` / `artifacts`: durable SPEC/PLAN representation.
 - `scheduler`: dependency waves + same-file serialization + cycle rejection.
-- `context`: narrow worker context packets.
-- `orchestrator`: pipeline selection, security lane activation, and model-route assembly.
+- `context`: narrow worker context packets; optional deterministic shared snapshot/cache for immutable repo/SPEC/PLAN facts.
+- `orchestrator`: pipeline selection, security lane activation, and model-route assembly. The default Tier 0/1 pipelines do not contain cache/QE/repair/observability stages.
 - `routing`: logical Luna/Sol policy, contextual escalation, downshift, and safe session-inheritance fallback.
+- `runtime`: derived runtime-root resolution for cache/evidence/log artifacts; never canonical project state.
 - `state`: atomic, versioned, recoverable `STATE.md`.
-- `verification`: reviewer independence, bounded fixes, security triggers.
+- `verification`: acceptance trace plus tier-aware evidence/completion gates.
+- `repair`: deterministic finding policy, fingerprinting, targeted implementation-owner repair, and the existing bounded fix-loop/routing policy.
+- `qe`: proof-gap-only deterministic process/HTTP/browser-provider adapters; no QE agent.
+- `observability`: best-effort redacted JSONL instrumentation with no model/agent call.
 - `wiki`: broken/orphan/stale/oversized lint and knowledge projection.
 - `.codex/agents`: standalone specialized role config.
 - `skills/`: canonical workflow skills, exposed through repository-local aliases.
@@ -88,7 +92,13 @@ Quality depth is also tier/risk dependent.
 - Tier 2/3 use the fuller independent quality path.
 - Security Reviewer is conditional on an actual trust-boundary/security surface.
 
-For full quality work the shape is `Implementer → [Tester / Code Reviewer / Security Reviewer] → Verifier`, with independent read-only QA roles allowed to run concurrently when their inputs are ready.
+For full quality work the shape is `Implementer → [Tester / Code Reviewer / Security Reviewer] → Verifier`, with independent read-only QA roles allowed to run concurrently against the integrated snapshot when their inputs are ready.
+
+Completion is evidence-gated on the existing acceptance trace. Tier 0 requires only fresh minimal evidence; Tier 1 uses targeted evidence; Tier 2/3 require full independent evidence. An implementer self-claim is never completion proof.
+
+Verifier distinguishes a real defect from missing proof. A blocking defect enters at most three targeted implementation-owner repair cycles; repeated failures reuse the existing Luna→Sol escalation and QA/verification runs again on the repaired snapshot. A `PROOF_GAP` instead selects the cheapest semantically adequate deterministic proof. Browser interaction is used only when the acceptance criterion truly requires it and a provider exists; unavailable required proof remains unverified.
+
+Shared context snapshots/cache are deterministic and add no LLM call. Cache corruption/unavailability is a miss, not a correctness failure. Passive observability adds no agent and is best-effort under the derived runtime root.
 
 Bounded security review uses Luna max; complex exploit/trust-boundary or critical unresolved judgment may enter Sol. The final routine Verifier can independently downshift back to Luna medium.
 
@@ -105,4 +115,4 @@ Restart reads `AGENTS.md`, `PROJECT.md`, `STATE.md`, the active SPEC/PLAN, and a
 
 ## Runtime boundary
 
-Deterministic orchestration and Codex config surfaces are verified, and authenticated A/B/C runtime smoke now verifies model-backed spawn, sibling parallelism, same-file serialization, quality-lane handoff/result collection, accepted Luna effort overrides, and rejected-model → no-override session-inheritance retry. Only real user-interactive Case D remains intentionally pending; serving-model identity is not independently attested. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.
+Deterministic orchestration and Codex config surfaces are verified. Authenticated A/B/C verify spawn, sibling parallelism, same-file serialization, and quality-lane handoff; E verifies the disposable worktree lifecycle; F verifies bounded planning convergence; G verifies actual review → implementation-owner repair → re-review/verifier convergence; H verifies proof-gap detection → real CLI proof acquisition → verifier reassessment. Explicit model/effort request acceptance is observed, but serving-model identity is not independently attested. Only real user-interactive Case D remains intentionally pending. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.

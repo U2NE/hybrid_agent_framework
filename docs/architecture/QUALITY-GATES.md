@@ -50,11 +50,23 @@ Complex work is goal-backward:
 
 Every criterion receives a stable `AC-NNN` trace row. A criterion with no plan coverage is `MISSING`. Implementation or verification evidence that is incomplete is `PARTIAL`. Final PASS requires every criterion to be `VERIFIED`.
 
+Completion depth is tier/risk aware rather than uniformly expensive: Tier 0 uses fresh minimal evidence, Tier 1 targeted evidence, and Tier 2/3 full independent evidence. Runtime interaction is required only when the criterion semantics cannot be established by the existing cheaper evidence. An implementer completion claim is never sufficient evidence by itself.
+
 ## Verification
 
 Final verification requires fresh post-implementation test output. Build, typecheck, and lint are required when applicable. The verifier also checks regression risk and alignment with the original SPEC goal.
 
 Stale implementer claims are not evidence. Any PARTIAL/MISSING acceptance row blocks PASS.
+
+A failing criterion is classified before escalation:
+
+- real blocking/critical/high defect, acceptance failure, or correctness-impacting medium finding → `FIX_REQUIRED`;
+- missing required proof with no demonstrated defect → `PROOF_GAP`;
+- low/style/nit → record if useful, but do not auto-repair.
+
+`FIX_REQUIRED` returns a small finding/evidence/file/symbol/expected-behavior/verification packet to the implementation owner. Reviewers remain read-only. Repair is capped at three cycles and repeated finding fingerprints reuse the existing failure-driven Luna→Sol routing.
+
+`PROOF_GAP` does not spawn a QE agent. Hybrid selects the cheapest semantically adequate deterministic proof: existing/focused command or test, CLI/process, HTTP, then a configured browser provider only when required. If required proof cannot be acquired, the criterion remains unverified. After proof acquisition the Verifier reassesses the affected evidence; ordinary tasks with no gap get no extra verifier call.
 
 ## Security activation and review
 

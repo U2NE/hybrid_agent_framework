@@ -16,6 +16,11 @@ The following are verified against the current repository and Codex 0.156.1:
 - iterative OMC-style clarification state machine and ontology convergence helpers.
 - planning consensus caps and acceptance-plan coverage gates.
 - fresh verification with acceptance traceability.
+- tier/risk-aware evidence-gated completion, structured proof gaps, and implementer self-claim rejection.
+- bounded repair finding policy/fingerprinting/targeted packets with existing failure-driven routing.
+- deterministic shared context snapshot/cache invalidation and safe cache-miss fallback outside tracked project state.
+- proof-gap-only process/HTTP/configured-browser acquisition; UI changes alone do not force browser execution.
+- passive redacted JSONL observability with non-fatal storage failure and no agent/LLM call.
 - conditional security activation and false-positive controls.
 - installer behavior with and without Codex CLI, including target agent/config preservation.
 - wiki lint/query/ingest.
@@ -109,6 +114,34 @@ The smoke began from a plan with a deterministic SPEC coverage defect: the rollb
 The deterministic tests additionally prove that exit-zero/fake-success reports are rejected, immutable revision/hash mismatches are rejected, and an Architect `ITERATE` blocks approval even when the Auditor approves.
 
 This validates convergence semantics, not permission to execute the resulting plan.
+
+### Case G — review → repair → review convergence
+
+Authenticated semantic PASS.
+
+- the disposable R1 fixture contained an objectively reproducible null-input defect; the focused Node test exited nonzero with a `TypeError`;
+- independent authenticated Tester and Code Reviewer workers overlapped, ran the focused test, and both reported the same blocking `AC-001` defect with concrete evidence;
+- because independent QA already established a blocking defect, Hybrid skipped an otherwise redundant pre-repair verifier call;
+- the lead sent a targeted repair packet back to the `implementer` owner, which changed only `src/user.js`;
+- the Git snapshot changed from R1 to R2 and direct focused tests passed after repair;
+- impacted Tester and Code Reviewer lanes reran after R2 and returned clean results;
+- a fresh independent Luna-medium Verifier ran after repair, executed the focused test, and returned PASS;
+- one repair cycle was used, below the hard cap of three; no recursive delegation was observed.
+
+The semantic validator rejects exit-zero-only reports and requires the original defect, QA finding/evidence, implementation-owner repair, changed snapshot, post-fix QA, fresh command-backed verifier evidence, and final behavior.
+
+### Case H — proof-gap QE without a QE agent
+
+Authenticated semantic PASS.
+
+- the initial completion gate refused to verify `AC-001` because required CLI runtime proof was absent;
+- the first authenticated Luna-medium Verifier evaluated only supplied evidence, executed no command, and returned `FAIL / PROOF_GAP`;
+- Hybrid used the deterministic process adapter—not an agent and not a browser—to execute the real CLI;
+- fresh structured evidence recorded exit 0 and stdout exactly `hello Alice`;
+- the completion gate then passed and the second authenticated Verifier consumed that evidence and returned PASS;
+- `qeAgentsSpawned=0` and `browserUsed=false`.
+
+This proves conditional proof acquisition. It does not imply that browser proof can be replaced by CLI proof when browser interaction is intrinsic to the acceptance criterion; an unavailable required browser provider remains a proof gap.
 
 ## Still intentionally pending
 

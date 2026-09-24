@@ -9,6 +9,8 @@ npm run smoke:preflight
 npm run smoke:routing:preflight
 npm run smoke:worktree:preflight
 npm run smoke:planning:preflight
+npm run smoke:repair:preflight
+npm run smoke:proof:preflight
 ```
 
 Preflight proves framework-side policy only. It does not prove subagent runtime behavior.
@@ -24,6 +26,8 @@ node scripts/runtime-smoke.mjs --live C
 npm run smoke:routing:live
 npm run smoke:worktree:live
 npm run smoke:planning:live
+npm run smoke:repair:live
+npm run smoke:proof:live
 ```
 
 Each A/B/C run creates an isolated temporary Git repository, installs Hybrid, runs `codex exec --strict-config --json`, and preserves JSONL/stderr under that workspace's `.planning/runtime-smoke/`.
@@ -36,8 +40,10 @@ A live case is PASS only after semantic validation of the generated report and o
 - **Routing probe:** exercises Luna high/xhigh/max request acceptance plus invalid-model rejection and no-override session-inheritance retry.
 - **Case E / worktree smoke:** forces worktree isolation for two independent writers and semantically requires real Git worktree creation, distinct worker cwd paths, overlapping authenticated workers, declared-owner patch handoff, fail-closed integration, integrated file checks, fresh final verifier command evidence, cleanup, and no orphan worktrees.
 - **Case F / planning convergence:** starts from a plan with one real deterministic SPEC coverage gap, binds independent Architect and Plan Auditor reviews to the same exact-byte plan hash, returns material objections to Planner-only revision, repeats within the bounded consensus policy, and passes only when both council reviewers approve the same corrected revision. Final execution approval must remain false.
+- **Case G / repair convergence:** requires an objectively failing R1 behavior, independent Tester/Code Reviewer defect evidence, targeted Implementer-owned repair with a changed Git snapshot, post-fix QA, fresh command-backed Verifier PASS, no recursive delegation, and at most three repairs. Exit code alone is insufficient.
+- **Case H / proof-gap QE:** requires the initial evidence gate and authenticated Verifier to refuse missing CLI proof, deterministic real process proof acquisition, final evidence-gate PASS, authenticated Verifier reassessment, zero QE agents, and zero browser use. Exit code alone is insufficient.
 
-Authenticated A, B, C, E, and F reached semantic PASS during the audit. The runtime does not expose independent backend model-attestation evidence, so reports state only that explicit model/effort requests were accepted.
+Authenticated A, B, C, E, F, G, and H reached semantic PASS during the audit. The runtime does not expose independent backend model-attestation evidence, so reports state only that explicit model/effort requests were accepted.
 
 ## Case D
 

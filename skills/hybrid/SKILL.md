@@ -24,9 +24,11 @@ Use this skill when the user asks to implement, change, fix, refactor, or add a 
    - choose Luna medium/high/xhigh/max from stage difficulty; use Sol only after Luna max is insufficient or for exceptionally difficult/critical unresolved reasoning;
    - after a Sol-only stage, recompute the next stage independently so normal implementer/tester/documentation work can downshift to Luna.
 8. If Codex rejects or cannot use the explicit routed model, retry that spawn once without model/reasoning override and record session-inheritance fallback. Never guess a replacement model ID.
-9. Run tester → code reviewer → conditional security reviewer → verifier.
-10. If verification fails, run targeted fix → verify up to three times.
-11. Integrate, run full tests, then update durable docs and the derived wiki.
+9. After an integrated snapshot exists, run only the applicable independent QA lanes (Tester / Code Reviewer / conditional Security Reviewer), then Verifier. Tier 0/1 fast paths remain unchanged unless their existing risk gates already require deeper QA.
+10. Completion is evidence-gated. A real blocking defect may enter targeted implementation-owner repair for at most three cycles; a missing proof becomes a structured proof gap and uses the cheapest adequate deterministic proof adapter before Verifier reassessment. Do not spawn a QE, Evidence Collector, or Repair agent.
+11. Reuse deterministic shared context snapshots only when the same repository/SPEC/PLAN facts would otherwise be reconstructed across workers. Cache miss/corruption/storage failure falls back to normal context construction and never changes correctness.
+12. Passive runtime events are derived best-effort artifacts only; they add no agent/model call and never become canonical state.
+13. Integrate, run full tests, then update durable docs and the derived wiki.
 
 ## Worker context
 

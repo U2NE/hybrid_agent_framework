@@ -17,7 +17,10 @@ test('repository canonical STATE.md matches the current runtime validation bound
   assert.equal(state.status, 'verified-interactive-runtime-pending');
   assert.match(state.nextAction, /exercise Case D with genuine user answers/i);
   assert.match(state.nextAction, /Cases A\/B\/C, routing probe, Case E worktree, Case F planning convergence/i);
-  assert.match(state.nextAction, /planning schema alias canonicalization/i);
+  assert.match(state.nextAction, /Case G repair convergence, Case H proof-gap QE/i);
+  assert.match(state.nextAction, /evidence-gated completion/i);
+  assert.match(state.nextAction, /deterministic context cache/i);
+  assert.match(state.nextAction, /passive observability/i);
   assert.match(state.nextAction, /full regression suite are complete/i);
   assert.deepEqual(state.blockers, [
     'Real Case D has not been exercised because the harness must not invent user responses',

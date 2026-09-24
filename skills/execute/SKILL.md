@@ -19,7 +19,9 @@ Give each implementer only a fresh context packet:
 - required verification
 - assigned ownership
 
-Worker context is budgeted and markdown-aware: preserve Goal, Acceptance Criteria, Constraints, relevant files/interfaces, dependencies, decisions, and required verification before lower-priority history/log prose. Ordinary implementer work starts on the appropriate Luna effort and only enters Sol after Luna is insufficient.
+Worker context is budgeted and markdown-aware: preserve Goal, Acceptance Criteria, Constraints, relevant files/interfaces, dependencies, decisions, and required verification before lower-priority history/log prose. When multiple workers need the same immutable repository/SPEC/PLAN facts, the lead may reuse the deterministic shared context snapshot/cache; it must not include role-private reasoning, add an LLM call, or become a correctness dependency. Ordinary implementer work starts on the appropriate Luna effort and only enters Sol after Luna is insufficient.
+
+If independent QA finds a blocking acceptance defect, return only a targeted repair packet to the implementation owner. Do not replay the full QA transcript. Proof acquisition is not an implementation task and does not create another agent.
 
 Only the lead dispatches siblings. Workers do not spawn or delegate to other workers. The lead owns shared state, lifecycle, result collection, and integration.
 

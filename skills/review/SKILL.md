@@ -5,9 +5,11 @@ description: Run independent testing, context-sensitive review, conditional Sol 
 
 # Review
 
-Run independent lanes after implementation:
+Run independent lanes against the integrated implementation snapshot when the task's existing tier/risk gates require them:
 
-Tester → Code Reviewer → conditional Security Reviewer → Verifier
+Tester + Code Reviewer + conditional Security Reviewer → Verifier
+
+Tier 0 remains implementer → lightweight verification. Ordinary Tier 1 remains implementer → verifier. The existence of evidence/QE/repair helpers does not add routine QA fan-out.
 
 Model routing:
 - Tester and routine Verifier use Luna.
@@ -23,5 +25,8 @@ Rules:
 - Code review checks SPEC compliance and correctness/error/edge/regression evidence before maintainability/style.
 - Security review applies the relevant auth/authz/validation/injection/XSS/SSRF/crypto/secrets/upload/payment/dependency/config checks and prioritizes severity × exploitability × blast radius.
 - Final verification requires fresh test evidence, build/type/lint where applicable, original SPEC goal alignment, and a VERIFIED/PARTIAL/MISSING row for every acceptance criterion. PARTIAL or MISSING blocks PASS.
-- Verification failure may enter the targeted fix loop. Stop after 3 failed fix iterations and mark blocked/failed with evidence.
+- Distinguish FIX_REQUIRED from PROOF_GAP. Blocking correctness/acceptance defects return to the implementation owner with a bounded targeted repair packet; low/style nits do not auto-repair. Stop after 3 failed repair cycles and reuse the existing failure-driven model escalation.
+- A proof gap does not create a QE agent. Acquire the cheapest semantically adequate proof (existing/focused deterministic command, CLI/process, HTTP, then browser only when required and available), then reassess the affected criterion. UI change alone never forces browser execution.
+- If a required browser/runtime provider is unavailable, keep the criterion unverified rather than fabricating evidence.
+- Context cache, proof selection, and passive observability add no agent/model calls.
 - If an explicit model override is rejected/unavailable, retry without model/reasoning override and record session-inheritance fallback.
