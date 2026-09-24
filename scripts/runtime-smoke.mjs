@@ -39,7 +39,7 @@ export const SMOKE_CASES = Object.freeze({
       'Task beta: edit only src/beta.js so it exports const beta = 2.',
       'They are independent and must be sibling workers in the same scheduler wave when the runtime permits parallelism.',
       'Do not let either worker delegate. Run independent verification after implementation.',
-      'Record planned/observed waves, worker roles, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json.',
+      'Record planned/observed waves, worker roles, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json. The JSON report must include planned_waves, observed_waves, workers, routes, model_fallbacks, verification, and enough runtime evidence to validate wave overlap/serialization, accepted model+reasoning override requests, no recursive delegation, and final verifier completion.',
     ].join('\n'),
   },
   B: {
@@ -81,9 +81,11 @@ export const SMOKE_CASES = Object.freeze({
       'Use $hybrid for a security-sensitive auth change.',
       'Modify src/auth.js so canAccess(user) returns true only when user exists and user.role === "admin".',
       'This must activate tester, code reviewer, security reviewer, and verifier as separate quality roles.',
+      'After the implementer finishes, run tester, code reviewer, and security reviewer as independent sibling QA workers in the same QA wave when safe; after all three return, run the verifier last.',
+      'Keep each QA worker focused on this one-file change and return promptly; do not perform unrelated repository exploration.',
       'The bounded security reviewer should use Luna max; routine tester/verifier work should remain/downshift to Luna unless another escalation condition is present.',
       'Do not let workers delegate.',
-      'Record planned/observed roles, security activation, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json.',
+      'Record planned/observed roles, security activation, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json. The JSON report must include planned_waves, observed_waves, workers, routes, model_fallbacks, verification, and enough runtime evidence to validate wave overlap/serialization, accepted model+reasoning override requests, no recursive delegation, and final verifier completion.',
     ].join('\n'),
   },
 });
@@ -318,21 +320,263 @@ export async function runLiveSmokeCase(name, options = {}) {
     '--cd',
     workspace,
     spec.prompt,
-  ], { cwd: workspace });
+  ], {
+    cwd: workspace,
+    timeoutMs: options.timeoutMs || 240000,
+  });
 
   await fs.writeFile(eventsPath, run.stdout || '', 'utf8');
   await fs.writeFile(stderrPath, run.stderr || '', 'utf8');
 
+  let semantic = null;
+  if (run.code === 0) {
+    semantic = await validateLiveSmokeWorkspace(key, workspace, preflight);
+  }
+
+  const completed = run.code === 0 && semantic?.ok === true;
   return {
-    status: run.code === 0 ? 'completed' : 'failed',
+    status: completed ? 'completed' : 'failed',
     case: key,
     workspace,
     eventsPath,
     stderrPath,
     elapsedMs: Date.now() - startedAt,
     exitCode: run.code,
-    ...(run.code === 0 ? {} : { error: run.error || 'codex exec failed' }),
+    semantic,
+    timedOut: run.timedOut === true,
+    ...(completed
+      ? {}
+      : {
+          error: run.timedOut
+            ? 'codex exec timed out'
+            : run.code === 0
+              ? 'semantic runtime assertions failed'
+              : (run.error || 'codex exec failed'),
+        }),
   };
+}
+
+export async function validateLiveSmokeWorkspace(key, workspace, preflight = null) {
+  const reportPath = path.join(workspace, '.planning', 'runtime-smoke-report.json');
+  const errors = [];
+  let report;
+
+  try {
+    report = JSON.parse(await fs.readFile(reportPath, 'utf8'));
+  } catch (error) {
+    return {
+      ok: false,
+      errors: ['runtime-smoke-report.json missing or invalid: ' + String(error.message || error)],
+      reportPath,
+    };
+  }
+
+  const planned = normalizeReportedWaves(report.planned_waves || report.plannedWaves || []);
+  const observed = normalizeReportedWaves(report.observed_waves || report.observedWaves || []);
+  const expected = preflight?.waves || SMOKE_CASES[key]?.expectedWaves || [];
+  if (key === 'A' || key === 'B') {
+    if (!sameNestedArray(planned, expected)) errors.push('planned waves do not match expected scheduler waves');
+    if (!sameNestedArray(observed, expected)) errors.push('observed waves do not match expected scheduler waves');
+  }
+
+  const workers = Array.isArray(report.workers) ? report.workers : [];
+  if (workers.some((worker) => worker.delegation_allowed === true || worker.delegated === true)) {
+    errors.push('recursive delegation was observed');
+  }
+
+  const verifierWorker = workers.find((worker) =>
+    String(worker.role || '').includes('verifier') ||
+    worker.task === 'verifier' ||
+    worker.id === 'verifier'
+  );
+  const verifierStatus =
+    report.verification?.final_verifier?.status ||
+    report.verification?.finalVerifier?.status ||
+    report.verification?.status ||
+    verifierWorker?.status;
+  const verifierVerdict =
+    report.verification?.final_verifier?.verdict ||
+    report.verification?.finalVerifier?.verdict ||
+    report.verification?.verdict ||
+    null;
+  const verifierCompleted =
+    /^(pass|passed|completed)$/i.test(String(verifierStatus || '')) &&
+    (!verifierVerdict || /^pass$/i.test(String(verifierVerdict)));
+  if (!verifierCompleted) {
+    errors.push('final verifier completion not evidenced');
+  }
+
+  if (key === 'A') {
+    const alpha = await readText(path.join(workspace, 'src', 'alpha.js'), errors);
+    const beta = await readText(path.join(workspace, 'src', 'beta.js'), errors);
+    if (!/^export const alpha = 1;\s*$/.test(alpha)) errors.push('src/alpha.js output is incorrect');
+    if (!/^export const beta = 2;\s*$/.test(beta)) errors.push('src/beta.js output is incorrect');
+
+    const observedWave = (report.observed_waves || report.observedWaves || [])[0] || {};
+    if (observedWave.overlap_observed !== true && observedWave.overlapObserved !== true) {
+      errors.push('parallel overlap was not observed');
+    }
+    const explicitSiblings = observedWave.sibling_workers || observedWave.siblingWorkers || [];
+    const snapshotSiblings = (report.runtime_evidence?.pre_release_snapshot?.agents || [])
+      .filter((agent) => String(agent.agent_name || '') !== '/root')
+      .filter((agent) => String(agent.agent_status || '').toLowerCase() === 'running')
+      .map((agent) => agent.agent_name);
+    const siblings = explicitSiblings.length ? explicitSiblings : snapshotSiblings;
+    if (!Array.isArray(siblings) || siblings.length < 2) {
+      errors.push('two sibling workers were not observed');
+    }
+
+    for (const taskId of ['alpha', 'beta']) {
+      const worker = workers.find((item) => item.task === taskId || item.id === taskId);
+      if (!worker) {
+        errors.push('missing implementation worker for ' + taskId);
+        continue;
+      }
+      if (!String(worker.role || '').includes('implementer')) errors.push(taskId + ' worker was not implementer');
+      const route = routeEvidenceForWorker(report, worker);
+      const requestedModel = worker.requested_model || route?.model;
+      const reasoningEffort = worker.reasoning_effort || route?.reasoning_effort;
+      const overrideAccepted =
+        worker.override_accepted ??
+        route?.override_request_accepted ??
+        route?.overrideAccepted;
+      if (requestedModel !== 'gpt-6-luna') errors.push(taskId + ' did not request Luna');
+      if (reasoningEffort !== 'medium') errors.push(taskId + ' did not request medium effort');
+      if (overrideAccepted !== true) errors.push(taskId + ' model/effort override not recorded as accepted');
+    }
+  }
+
+  if (key === 'B') {
+    const shared = await readText(path.join(workspace, 'src', 'shared.js'), errors);
+    if (!/export const first = 1;/.test(shared)) errors.push('shared.js missing first change');
+    if (!/export const second = 2;/.test(shared)) errors.push('shared.js missing second change');
+    if (observed.length !== 2 || observed.some((wave) => wave.length !== 1)) {
+      errors.push('same-file writers were not observed in separate waves');
+    }
+    const firstWorker = workers.find((item) => item.task === 'first' || item.id === 'first');
+    const secondWorker = workers.find((item) => item.task === 'second' || item.id === 'second');
+    if (!firstWorker || !secondWorker) errors.push('same-file implementation workers missing');
+    if (
+      firstWorker &&
+      secondWorker &&
+      firstWorker.wave != null &&
+      secondWorker.wave != null &&
+      firstWorker.wave === secondWorker.wave
+    ) {
+      errors.push('same-file implementation workers reported the same wave');
+    }
+    const reportedObserved = report.observed_waves || report.observedWaves || [];
+    if (reportedObserved.some((wave) => wave.overlap_observed === true || wave.overlapObserved === true)) {
+      errors.push('same-file writer overlap was reported');
+    }
+  }
+
+  if (key === 'C') {
+    const source = await readText(path.join(workspace, 'src', 'auth.js'), errors);
+    if (source) {
+      try {
+        const module = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64') + '#smoke=' + Date.now());
+        if (module.canAccess({ role: 'admin' }) !== true) errors.push('admin access behavior incorrect');
+        if (module.canAccess({ role: 'user' }) !== false) errors.push('non-admin access behavior incorrect');
+        if (module.canAccess(null) !== false) errors.push('null-user access behavior incorrect');
+      } catch (error) {
+        errors.push('auth output could not be executed: ' + String(error.message || error));
+      }
+    }
+
+    const requiredRoles = ['tester', 'code-reviewer', 'security-reviewer', 'verifier'];
+    for (const role of requiredRoles) {
+      if (!workers.some((worker) => normalizeRole(worker.role) === role)) {
+        errors.push('missing observed ' + role + ' worker');
+      }
+    }
+
+    const security =
+      workers.find((worker) => normalizeRole(worker.role) === 'security-reviewer') ||
+      null;
+    if (security) {
+      const route = routeEvidenceForWorker(report, security);
+      const requestedModel = security.requested_model || security.model || route?.model;
+      const reasoningEffort =
+        security.reasoning_effort ||
+        security.effort ||
+        route?.reasoning_effort ||
+        route?.reasoningEffort;
+      const overrideAccepted =
+        security.override_accepted ??
+        security.overrideAccepted ??
+        security.spawnAccepted ??
+        security.accepted ??
+        route?.override_request_accepted ??
+        route?.overrideAccepted ??
+        route?.spawnAccepted ??
+        route?.accepted;
+      if (requestedModel !== 'gpt-6-luna') errors.push('security reviewer did not request gpt-6-luna');
+      if (reasoningEffort !== 'max') errors.push('security reviewer did not request max effort');
+      if (overrideAccepted !== true) errors.push('security reviewer override was not recorded as accepted');
+    }
+
+    const securityStatus =
+      report.verification?.security_review?.status ||
+      report.verification?.securityReview?.status ||
+      security?.status;
+    if (!/^(passed|completed)$/i.test(String(securityStatus || ''))) {
+      errors.push('security review completion not evidenced');
+    }
+  }
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    reportPath,
+    report,
+    modelIdentityAttested: false,
+    modelClaim: 'Only requested/accepted model and reasoning overrides are asserted; underlying model identity is not independently attested.',
+  };
+}
+
+function routeEvidenceForWorker(report, worker) {
+  const routes = report.routes;
+  if (Array.isArray(routes)) {
+    return routes.find((route) =>
+      (worker.agent && route.agent === worker.agent) ||
+      (worker.id && (route.task === worker.id || route.id === worker.id)) ||
+      (worker.task && (route.task === worker.task || route.id === worker.task)) ||
+      (worker.role && route.role && normalizeRole(route.role) === normalizeRole(worker.role))
+    ) || null;
+  }
+  if (routes && typeof routes === 'object') {
+    const role = normalizeRole(worker.role);
+    return routes[worker.task] || routes[worker.id] || routes[role] || routes[role.replace(/-/g, '_')] || null;
+  }
+  return null;
+}
+
+function normalizeRole(value) {
+  return String(value || '')
+    .replace(/^hybrid[-_]/, '')
+    .replace(/_/g, '-')
+    .toLowerCase();
+}
+
+function normalizeReportedWaves(waves) {
+  return (Array.isArray(waves) ? waves : []).map((wave) => {
+    if (Array.isArray(wave)) return wave.map(String);
+    return (wave?.tasks || []).map(String);
+  });
+}
+
+function sameNestedArray(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+async function readText(target, errors) {
+  try {
+    return await fs.readFile(target, 'utf8');
+  } catch (error) {
+    errors.push('missing output file ' + target + ': ' + String(error.message || error));
+    return '';
+  }
 }
 
 async function seedCase(root, key) {
@@ -347,7 +591,7 @@ async function seedCase(root, key) {
   }
 }
 
-async function runCodexExec(codexBin, args, options = {}) {
+export async function runCodexExec(codexBin, args, options = {}) {
   return new Promise((resolve) => {
     const child = spawn(codexBin, args, {
       cwd: options.cwd,
@@ -357,20 +601,42 @@ async function runCodexExec(codexBin, args, options = {}) {
 
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    const timeoutMs = Number(options.timeoutMs || 0);
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill('SIGTERM');
+        }, timeoutMs)
+      : null;
+    timer?.unref?.();
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve({ ...result, timedOut });
+    };
+
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (error) => {
-      resolve({ code: -1, stdout, stderr, error: String(error.message || error) });
+      finish({ code: -1, stdout, stderr, error: String(error.message || error) });
     });
     child.on('close', (code, signal) => {
-      resolve({
+      finish({
         code: code ?? -1,
         signal,
         stdout,
         stderr,
-        error: code === 0 ? null : ('codex exited with code ' + code + (signal ? ' signal ' + signal : '')),
+        error: code === 0 ? null : (
+          timedOut
+            ? 'codex exec timed out after ' + timeoutMs + 'ms'
+            : 'codex exited with code ' + code + (signal ? ' signal ' + signal : '')
+        ),
       });
     });
   });

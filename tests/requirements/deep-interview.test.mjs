@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_AMBIGUITY_THRESHOLD,
   ambiguityStalled,
+  appendOntologySnapshot,
   buildTopologyConfirmationQuestion,
+  computeOntologySnapshot,
   confirmInterviewTopology,
   createInterviewState,
   evaluateRequirements,
   interviewProgress,
   nextInterviewQuestion,
+  ontologyNeedsStabilization,
   recordInterviewRound,
   resolveAmbiguityThreshold,
   selectChallengeMode,
@@ -247,4 +250,86 @@ test('normal completion occurs only after the ambiguity threshold and required f
   assert.equal(result.pass, true);
   assert.equal(result.approvalRequired, true);
   assert.equal(result.status, 'clarity-passed-pending-approval');
+});
+
+
+test('ontology convergence matches pinned OMC stable changed new removed semantics', () => {
+  const first = computeOntologySnapshot(null, [
+    { name: 'User', type: 'core domain', fields: ['id', 'email'], relationships: ['User owns Project'] },
+    { name: 'Project', type: 'core domain', fields: ['id', 'name', 'ownerId'], relationships: [] },
+  ]);
+  assert.equal(first.stabilityRatio, null);
+  assert.deepEqual(first.newEntities, ['User', 'Project']);
+
+  const second = computeOntologySnapshot(first.entities, [
+    { name: 'User', type: 'core domain', fields: ['id', 'email'], relationships: ['User owns Workspace'] },
+    { name: 'Workspace', type: 'core domain', fields: ['id', 'name', 'ownerId', 'slug'], relationships: [] },
+    { name: 'Tag', type: 'supporting', fields: ['id', 'label'], relationships: [] },
+  ]);
+
+  assert.deepEqual(second.stableEntities, ['User']);
+  assert.equal(second.changedEntities.length, 1);
+  assert.equal(second.changedEntities[0].from, 'Project');
+  assert.equal(second.changedEntities[0].to, 'Workspace');
+  assert.deepEqual(second.newEntities, ['Tag']);
+  assert.deepEqual(second.removedEntities, []);
+  assert.equal(second.stabilityRatio, 0.666667);
+
+  const third = computeOntologySnapshot(second.entities, second.entities);
+  assert.equal(third.stabilityRatio, 1);
+  assert.equal(third.stableEntities.length, 3);
+  assert.deepEqual(third.newEntities, []);
+  assert.deepEqual(third.changedEntities, []);
+});
+
+test('ontology convergence is opt-in by state instability and does not tax ordinary bounded flows', () => {
+  let state = createInterviewState({ initialIdea: 'scope fuzzy task' });
+  assert.equal(ontologyNeedsStabilization(state), false);
+
+  ({ state } = appendOntologySnapshot(state, [
+    { name: 'Task', type: 'core domain', fields: ['id', 'name'] },
+  ]));
+  assert.equal(ontologyNeedsStabilization(state), false);
+
+  ({ state } = appendOntologySnapshot(state, [
+    { name: 'Task', type: 'core domain', fields: ['id', 'name'] },
+    { name: 'Workspace', type: 'core domain', fields: ['id', 'name'] },
+  ]));
+  assert.equal(ontologyNeedsStabilization(state), true);
+
+  ({ state } = appendOntologySnapshot(state, [
+    { name: 'Task', type: 'core domain', fields: ['id', 'name'] },
+    { name: 'Workspace', type: 'core domain', fields: ['id', 'name'] },
+  ]));
+  assert.equal(ontologyNeedsStabilization(state), false);
+});
+
+test('unstable ontology changes question strategy without consuming Ontologist challenge mode', () => {
+  let state = confirmInterviewTopology(createInterviewState({ initialIdea: 'design task model' }), {
+    components: [{ id: 'core', name: 'Core', description: 'Core domain' }],
+  });
+  ({ state } = appendOntologySnapshot(state, [
+    { name: 'Task', type: 'core domain', fields: ['id'] },
+  ]));
+  ({ state } = appendOntologySnapshot(state, [
+    { name: 'Workspace', type: 'core domain', fields: ['id'] },
+    { name: 'Project', type: 'core domain', fields: ['id'] },
+  ]));
+
+  const spec = {
+    type: 'greenfield',
+    goal: 'Design the task domain',
+    acceptanceCriteria: ['domain is defined'],
+    topology: [{
+      id: 'core',
+      name: 'Core',
+      status: 'active',
+      clarity: { goal: 0.4, constraints: 0.5, criteria: 0.5 },
+    }],
+  };
+
+  const question = nextInterviewQuestion(state, spec);
+  assert.equal(question.questionStrategy, 'ontology-stabilization');
+  assert.match(question.question, /core thing/i);
+  assert.equal(state.challengeModesUsed.includes('ontologist'), false);
 });

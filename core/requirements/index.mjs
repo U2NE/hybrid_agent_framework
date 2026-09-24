@@ -322,6 +322,7 @@ export function nextInterviewQuestion(state, spec, options = {}) {
   const weakest = evaluation.weakest;
   if (!weakest) return null;
 
+  const ontologyStrategy = ontologyNeedsStabilization(state, options);
   const challengeMode = selectChallengeMode(state, evaluation.ambiguity);
   const evidence = scoutEvidenceFor(state, options.scoutEvidence, weakest.componentId);
 
@@ -344,14 +345,19 @@ export function nextInterviewQuestion(state, spec, options = {}) {
     dimension: weakest.dimension,
     score: weakest.score,
     ambiguityBefore: evaluation.ambiguity,
-    why: weakest.componentId + ' × ' + weakest.dimension + ' is the lowest active clarity pair.',
+    why: ontologyStrategy
+      ? 'The domain entities are still unstable, so stabilizing the core ontology has higher leverage than adding feature detail.'
+      : weakest.componentId + ' × ' + weakest.dimension + ' is the lowest active clarity pair.',
     challengeMode,
-    question: buildInterviewQuestion({
-      componentId: weakest.componentId,
-      dimension: weakest.dimension,
-      challengeMode,
-      evidence,
-    }),
+    questionStrategy: ontologyStrategy ? 'ontology-stabilization' : 'weakest-dimension',
+    question: ontologyStrategy
+      ? buildOntologyStabilizationQuestion(state)
+      : buildInterviewQuestion({
+          componentId: weakest.componentId,
+          dimension: weakest.dimension,
+          challengeMode,
+          evidence,
+        }),
   };
 }
 
@@ -391,6 +397,16 @@ export function recordInterviewRound(state, input = {}) {
   next.roundCount = next.rounds.length;
   next.currentAmbiguity = evaluation.ambiguity;
   next.currentScores = afterScores;
+
+  if (Array.isArray(input.ontologyEntities)) {
+    const priorEntities = next.ontologySnapshots?.length
+      ? next.ontologySnapshots[next.ontologySnapshots.length - 1].entities
+      : null;
+    const snapshot = computeOntologySnapshot(priorEntities, input.ontologyEntities);
+    next.ontologySnapshots = [...(next.ontologySnapshots || []), snapshot];
+    round.ontology = snapshot;
+  }
+
   next.topology.lastTargetedComponentId = input.question.componentId;
   next.topology.components = next.topology.components.map((component) => {
     const result = evaluation.components.find((candidate) => candidate.id === component.id);
@@ -662,6 +678,13 @@ export function buildSpecSkeleton(input = {}) {
   };
 }
 
+function buildOntologyStabilizationQuestion(state) {
+  const latest = state.ontologySnapshots?.[state.ontologySnapshots.length - 1];
+  const names = latest?.entities?.map((entity) => entity.name).filter(Boolean) || [];
+  const summary = names.length ? names.join(', ') : 'the concepts named so far';
+  return 'The domain model is still shifting (' + summary + '). What is the core thing here, and which named concepts are supporting entities, views, or containers?';
+}
+
 function buildInterviewQuestion({ componentId, dimension, challengeMode, evidence }) {
   if (challengeMode === 'contrarian') {
     return 'For ' + componentId + ', what would change if the opposite of the current ' + dimension + ' assumption were true?';
@@ -815,4 +838,137 @@ function slugify(value) {
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
+}
+
+
+export function computeOntologySnapshot(previousEntities = null, currentEntities = []) {
+  const current = normalizeEntities(currentEntities);
+  const previous = Array.isArray(previousEntities) ? normalizeEntities(previousEntities) : null;
+
+  if (!previous || current.length === 0) {
+    return {
+      entities: current,
+      stableEntities: [],
+      changedEntities: [],
+      newEntities: current.map((entity) => entity.name),
+      removedEntities: previous ? previous.map((entity) => entity.name) : [],
+      stabilityRatio: null,
+      matchingReasoning: previous
+        ? 'No current entities; stability is N/A.'
+        : 'First ontology round; all entities are new and stability is N/A.',
+    };
+  }
+
+  const usedPrevious = new Set();
+  const stableEntities = [];
+  const changedEntities = [];
+  const newEntities = [];
+  const reasoning = [];
+
+  for (const entity of current) {
+    const exactIndex = previous.findIndex((candidate, index) =>
+      !usedPrevious.has(index) &&
+      candidate.name.toLowerCase() === entity.name.toLowerCase()
+    );
+
+    if (exactIndex >= 0) {
+      usedPrevious.add(exactIndex);
+      stableEntities.push(entity.name);
+      reasoning.push(entity.name + ' matched previous entity by name');
+      continue;
+    }
+
+    let best = null;
+    for (let index = 0; index < previous.length; index++) {
+      if (usedPrevious.has(index)) continue;
+      const candidate = previous[index];
+      if (candidate.type.toLowerCase() !== entity.type.toLowerCase()) continue;
+      const overlap = fieldOverlap(candidate.fields, entity.fields);
+      if (overlap > 0.5 && (!best || overlap > best.overlap)) {
+        best = { index, candidate, overlap };
+      }
+    }
+
+    if (best) {
+      usedPrevious.add(best.index);
+      changedEntities.push({
+        from: best.candidate.name,
+        to: entity.name,
+        fieldOverlap: roundScore(best.overlap),
+      });
+      reasoning.push(
+        best.candidate.name + ' -> ' + entity.name +
+        ' matched as renamed (' + Math.round(best.overlap * 100) + '% field overlap)'
+      );
+      continue;
+    }
+
+    newEntities.push(entity.name);
+    reasoning.push(entity.name + ' is new');
+  }
+
+  const removedEntities = previous
+    .filter((_, index) => !usedPrevious.has(index))
+    .map((entity) => entity.name);
+
+  for (const name of removedEntities) reasoning.push(name + ' was removed');
+
+  return {
+    entities: current,
+    stableEntities,
+    changedEntities,
+    newEntities,
+    removedEntities,
+    stabilityRatio: current.length
+      ? roundScore((stableEntities.length + changedEntities.length) / current.length)
+      : null,
+    matchingReasoning: reasoning.join('; '),
+  };
+}
+
+export function appendOntologySnapshot(state, entities) {
+  const next = clone(state);
+  const prior = next.ontologySnapshots?.length
+    ? next.ontologySnapshots[next.ontologySnapshots.length - 1].entities
+    : null;
+  const snapshot = computeOntologySnapshot(prior, entities);
+  next.ontologySnapshots = [...(next.ontologySnapshots || []), snapshot];
+  return { state: next, snapshot };
+}
+
+export function ontologyNeedsStabilization(state, options = {}) {
+  if (options.scopeFuzzy === true) return true;
+  const snapshots = state?.ontologySnapshots || [];
+  if (!snapshots.length) return false;
+  const latest = snapshots[snapshots.length - 1];
+  if (latest.stabilityRatio === null) return false;
+  const threshold = Number(options.stabilityThreshold ?? 0.75);
+  return latest.stabilityRatio < threshold ||
+    latest.newEntities.length > 0 ||
+    latest.changedEntities.length > 0;
+}
+
+function normalizeEntities(entities) {
+  return (Array.isArray(entities) ? entities : [])
+    .filter(Boolean)
+    .map((entity) => ({
+      name: String(entity.name || '').trim(),
+      type: String(entity.type || '').trim(),
+      fields: uniqueStrings(entity.fields),
+      relationships: uniqueStrings(entity.relationships),
+    }))
+    .filter((entity) => entity.name);
+}
+
+function fieldOverlap(a, b) {
+  const left = new Set(uniqueStrings(a).map((value) => value.toLowerCase()));
+  const right = new Set(uniqueStrings(b).map((value) => value.toLowerCase()));
+  if (!left.size && !right.size) return 0;
+  let intersection = 0;
+  for (const value of left) if (right.has(value)) intersection++;
+  return intersection / Math.max(left.size, right.size, 1);
+}
+
+function uniqueStrings(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map(String).map((value) => value.trim()).filter(Boolean))];
 }
