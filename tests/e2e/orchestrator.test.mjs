@@ -237,3 +237,33 @@ test('risky parallel writers use worktree isolation and unavailable worktrees fa
   assert.deepEqual(fallback.waves.map((wave) => wave.map((task) => task.id)), [['client'], ['lock']]);
   assert.ok(fallback.isolationPlan.isolation.every((entry) => entry.reason === 'worktree-unavailable-safe-serialization'));
 });
+
+
+test('evidence repair cache QE and observability helpers add no default fast-path stages', () => {
+  const forbidden = new Set([
+    'repair',
+    'repair-controller',
+    'qe',
+    'qe-agent',
+    'context-cache',
+    'context-snapshot',
+    'observability',
+    'evidence-collector',
+  ]);
+
+  const tier0 = prepareExecution({
+    task: { request: '오타 한 줄 수정', files: ['README.md'] },
+    request: '오타 한 줄 수정',
+    tasks: [{ id: 'edit', depends_on: [], files_modified: ['README.md'] }],
+  });
+  assert.deepEqual(tier0.pipeline, ['implementer', 'lightweight-verify']);
+  assert.equal(tier0.pipeline.some((stage) => forbidden.has(stage)), false);
+
+  const tier1 = prepareExecution({
+    task: { request: 'Update src/parser.js error message', files: ['src/parser.js'] },
+    request: 'Update src/parser.js error message',
+    tasks: [{ id: 'parser', depends_on: [], files_modified: ['src/parser.js'] }],
+  });
+  assert.deepEqual(tier1.pipeline, ['implementer', 'verifier']);
+  assert.equal(tier1.pipeline.some((stage) => forbidden.has(stage)), false);
+});
