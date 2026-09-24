@@ -206,3 +206,227 @@ function hasEvidence(value) {
 function isStrongSecurityPath(file) {
   return /(?:^|\/)(?:auth|security|crypto|payments?|uploads?)(?:\/|\.|$)/i.test(String(file));
 }
+
+export const EVIDENCE_KINDS = Object.freeze([
+  'test',
+  'build',
+  'typecheck',
+  'lint',
+  'review',
+  'cli',
+  'http',
+  'browser',
+]);
+
+export function resolveEvidencePolicy(options = {}) {
+  const tier = Math.max(0, Math.min(3, Number(options.tier ?? 1)));
+  const depth = tier === 0 ? 'minimal' : tier === 1 ? 'targeted' : 'full';
+  const runtimeInteractionRequired = options.runtimeInteractionRequired === true;
+  const requiredKinds = uniqueEvidenceKinds(options.requiredKinds || []);
+
+  return {
+    tier,
+    depth,
+    requireFresh: true,
+    requireIndependent: tier >= 2,
+    runtimeInteractionRequired,
+    requiredKinds,
+  };
+}
+
+export function normalizeEvidence(value, defaults = {}) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    return {
+      kind: defaults.kind || 'test',
+      source: text,
+      fresh: defaults.fresh !== false,
+      success: defaults.success !== false,
+      independent: defaults.independent === true,
+      criterionId: defaults.criterionId || null,
+      artifactRef: defaults.artifactRef || null,
+    };
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const kind = String(value.kind || defaults.kind || 'test').trim().toLowerCase();
+  if (!EVIDENCE_KINDS.includes(kind)) return null;
+
+  const exitCode = value.exitCode == null ? null : Number(value.exitCode);
+  const success =
+    value.success === true ||
+    value.passed === true ||
+    (Number.isInteger(exitCode) && exitCode === 0);
+
+  return {
+    kind,
+    source: String(value.source || value.evidence || defaults.source || '').trim(),
+    fresh: value.fresh !== false && defaults.fresh !== false,
+    success,
+    independent: value.independent === true || defaults.independent === true,
+    criterionId: value.criterionId || defaults.criterionId || null,
+    exitCode: Number.isInteger(exitCode) ? exitCode : null,
+    artifactRef: value.artifactRef || defaults.artifactRef || null,
+    stdout: typeof value.stdout === 'string' ? value.stdout : undefined,
+    stderr: typeof value.stderr === 'string' ? value.stderr : undefined,
+  };
+}
+
+export function findProofGaps(input = {}) {
+  const policy = input.policy || resolveEvidencePolicy(input);
+  const trace = Array.isArray(input.trace) ? input.trace : [];
+  const evidence = flattenEvidence(input.evidence || []);
+  const requiredProofByCriterion = input.requiredProofByCriterion || {};
+  const gaps = [];
+
+  for (const item of trace) {
+    if (!item?.id) continue;
+    const requiredKind = normalizeRequiredKind(
+      requiredProofByCriterion[item.id] ??
+      requiredProofByCriterion[item.criterion]
+    );
+    if (!requiredKind) continue;
+
+    const matching = evidence.filter((entry) =>
+      entry &&
+      entry.criterionId === item.id &&
+      entry.kind === requiredKind &&
+      entry.success === true &&
+      (!policy.requireFresh || entry.fresh === true)
+    );
+
+    if (!matching.length) {
+      gaps.push({
+        criterionId: item.id,
+        requiredKind,
+        reason: 'required ' + requiredKind + ' proof is missing',
+      });
+    }
+  }
+
+  for (const requiredKind of policy.requiredKinds) {
+    const found = evidence.some((entry) =>
+      entry?.kind === requiredKind &&
+      entry.success === true &&
+      (!policy.requireFresh || entry.fresh === true)
+    );
+    if (!found) {
+      gaps.push({
+        criterionId: null,
+        requiredKind,
+        reason: 'required ' + requiredKind + ' evidence is missing',
+      });
+    }
+  }
+
+  return dedupeProofGaps(gaps);
+}
+
+export function evaluateCompletionGate(input = {}) {
+  const tier = Math.max(0, Math.min(3, Number(input.tier ?? 1)));
+  const policy = resolveEvidencePolicy({
+    tier,
+    runtimeInteractionRequired: input.runtimeInteractionRequired,
+    requiredKinds: input.requiredKinds,
+  });
+  const report = input.report || {};
+  const runtimeEvidence = flattenEvidence(
+    input.evidence ||
+    report.runtimeEvidence ||
+    report.evidence ||
+    []
+  );
+
+  if (tier === 0) {
+    const minimal = normalizeEvidence(
+      report.lightweightVerificationEvidence || runtimeEvidence[0],
+      { kind: 'test', fresh: true }
+    );
+    const pass = Boolean(minimal?.fresh && minimal?.success);
+    return {
+      pass,
+      verdict: pass ? 'PASS' : 'FAIL',
+      reason: pass ? null : 'PROOF_GAP',
+      evidencePolicy: policy,
+      proofGaps: pass
+        ? []
+        : [{ criterionId: null, requiredKind: minimal?.kind || 'test', reason: 'fresh lightweight evidence is missing' }],
+      verification: null,
+    };
+  }
+
+  const verification = evaluateVerificationReport(report);
+  const proofGaps = findProofGaps({
+    policy,
+    trace: verification.acceptance.items,
+    evidence: runtimeEvidence,
+    requiredProofByCriterion: input.requiredProofByCriterion,
+  });
+  const independentPass =
+    !policy.requireIndependent ||
+    report.independentVerification === true ||
+    runtimeEvidence.some((entry) => entry?.independent === true && entry?.success === true);
+
+  if (!independentPass) {
+    proofGaps.push({
+      criterionId: null,
+      requiredKind: 'review',
+      reason: 'independent verification evidence is required for this tier',
+    });
+  }
+
+  const pass = verification.pass && proofGaps.length === 0;
+  const missingProofOnly =
+    !pass &&
+    proofGaps.length > 0 &&
+    verification.gaps.every((gap) => gap === 'acceptance-trace' || gap === 'fresh-test-output');
+
+  return {
+    pass,
+    verdict: pass ? 'PASS' : 'FAIL',
+    reason: pass ? null : (missingProofOnly ? 'PROOF_GAP' : 'FAILURE'),
+    evidencePolicy: policy,
+    proofGaps: dedupeProofGaps(proofGaps),
+    verification,
+  };
+}
+
+function flattenEvidence(value) {
+  const items = Array.isArray(value) ? value : Object.values(value || {});
+  const flattened = [];
+  for (const item of items) {
+    if (Array.isArray(item)) {
+      flattened.push(...flattenEvidence(item));
+      continue;
+    }
+    const normalized = normalizeEvidence(item);
+    if (normalized) flattened.push(normalized);
+  }
+  return flattened;
+}
+
+function normalizeRequiredKind(value) {
+  if (value == null || value === '') return null;
+  const kind = String(value).trim().toLowerCase();
+  return EVIDENCE_KINDS.includes(kind) ? kind : null;
+}
+
+function uniqueEvidenceKinds(values) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .map(normalizeRequiredKind)
+      .filter(Boolean)
+  )];
+}
+
+function dedupeProofGaps(gaps) {
+  const seen = new Set();
+  return gaps.filter((gap) => {
+    const key = [gap.criterionId || '', gap.requiredKind || '', gap.reason || ''].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
