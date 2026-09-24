@@ -71,6 +71,6 @@ Installation into a target repository copies the canonical skill snapshots into 
 
 Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, and installer behavior.
 
-Authenticated runtime validation is still pending for actual subagent spawning, sibling parallel execution, handoff/result collection, and actual model override/fallback behavior because this WSL currently has no Codex credentials.
+Authenticated runtime validation is complete for A/B/C functional cases, sibling parallelism, same-file serialization, quality-lane handoffs, Luna effort overrides, and rejected-model → session-inheritance retry. A genuine user-interactive clarification Case D remains pending by design; backend serving-model identity is not independently attested.
 
 Prepared functional cases are implemented by `scripts/runtime-smoke.mjs`. See `docs/architecture/RUNTIME-SMOKE.md` and `docs/RUNTIME-VALIDATION.md`.

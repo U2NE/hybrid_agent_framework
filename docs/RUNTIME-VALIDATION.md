@@ -2,60 +2,105 @@
 
 ## Verified
 
-The following are verified:
+The following are verified against the current repository and Codex 0.156.1:
 
 - Node syntax/config surface.
-- Codex 0.156.1 strict config loading.
+- strict Codex config loading.
 - custom agent registration and standalone agent TOML shape.
 - repository-local skill discovery layout and YAML frontmatter.
-- exact Luna/Sol model IDs present in the Codex 0.156.1 model catalog.
-- logical model routing and escalation/downshift/fallback decisions.
-- dependency-wave scheduler, same-file serialization, and cycle rejection.
-- state persistence, schema compatibility, and fail-closed corruption/schema handling.
+- current Luna/Sol concrete model IDs and supported reasoning-effort catalog.
+- stage-local Luna effort routing and conditional Sol escalation.
+- safe no-override session-inheritance fallback after a rejected model request.
+- dependency waves, same-file serialization, cycle rejection, and risk-based isolation policy.
+- state persistence/schema compatibility/fail-closed corruption handling.
+- iterative OMC-style clarification state machine and ontology convergence helpers.
+- planning consensus caps and acceptance-plan coverage gates.
+- fresh verification with acceptance traceability.
+- conditional security activation and false-positive controls.
+- installer behavior with and without Codex CLI, including target agent/config preservation.
 - wiki lint/query/ingest.
-- independent verification and bounded fix loop.
-- conditional security-review activation.
-- installer behavior with and without a Codex CLI.
-- authenticated Case A subagent spawn.
-- authenticated Case A sibling parallel execution.
-- authenticated Case A handoff/result collection.
-- authenticated Case A explicit `gpt-6-luna` spawn overrides accepted by the runtime.
 
-## Runtime validation still pending
+## Authenticated runtime evidence
 
-Case A is now verified end to end. These are still not claimed as verified:
+### Case A — sibling parallelism
 
-- Case B live same-file serialization.
-- Case C live security-reviewer activation with Sol escalation.
-- a deliberately rejected model override followed by actual session-inheritance retry.
-- independently attested underlying model identity after an accepted spawn override; Codex confirms the override request was accepted but does not expose separate model-attestation evidence in this trace.
+Semantic PASS.
 
-Run `scripts/runtime-smoke.mjs --live B` and `--live C` for the remaining functional cases.
+- two independent implementation workers were observed running at the same time;
+- both were direct children of the lead;
+- both produced the exact requested files;
+- both requested `gpt-6-luna / medium` and the spawn requests were accepted;
+- no recursive delegation was observed;
+- an independent verifier completed successfully.
 
-## Case A observation
+Latest observed wall time was about 164 seconds. This is a functional smoke, not a benchmark.
 
-Authenticated Case A completed in about 182 seconds.
+### Case B — same-file serialization
 
-- two independent implementation workers were observed running concurrently;
-- both requested `gpt-6-luna` with medium reasoning and the runtime accepted both overrides;
-- both implementation files were already complete at roughly the first 50 seconds;
-- the remaining runtime was dominated by sequential tester → code reviewer → verifier stages.
+Semantic PASS.
 
-This shows that the current bottleneck for tiny bounded work is orchestration/QA fan-out, not implementation parallelism.
+- two tasks targeted the same file;
+- scheduler planned two separate waves;
+- wave 1 completed before wave 2 started;
+- both final changes were present;
+- an independent verifier re-imported the result and checked exact exports;
+- no recursive delegation was observed.
 
-A separate direct Luna profiling run completed a minimal Node CLI in about 24 seconds with unrestricted sandboxing. The same style of task took about 64 seconds under `workspace-write` after subprocess-based tests hit `EPERM` and triggered repeated diagnosis. Sandbox/test compatibility is therefore a second operational bottleneck.
+Observed wall time was about 179 seconds.
+
+### Case C — security quality lanes and downshift
+
+Semantic PASS.
+
+- the auth/authorization change activated security review;
+- implementer ran first;
+- tester, code reviewer, and security reviewer ran as independent QA workers;
+- security reviewer requested `gpt-6-luna / max`, and that override request was accepted;
+- verifier subsequently requested `gpt-6-luna / medium`, demonstrating stage-local downshift after the heavier security stage;
+- verifier ran fresh assertions and passed;
+- all workers remained direct children of the lead.
+
+Observed wall time was about 197 seconds.
+
+### Routing probe
+
+Authenticated PASS.
+
+- explicit `gpt-6-luna / high` request accepted;
+- explicit `gpt-6-luna / xhigh` request accepted;
+- explicit `gpt-6-luna / max` request accepted;
+- intentionally invalid model request rejected;
+- retry without model/reasoning override succeeded via session inheritance.
+
+These observations prove request acceptance/rejection and fallback behavior. Codex did not expose independent serving-model attestation, so Hybrid does not claim the backend identity was independently verified.
+
+## Still intentionally pending
+
+### Case D — real user-interactive clarification
+
+The deterministic Case D fixture is verified:
+
+- Round 0 topology confirmation;
+- multiple one-question rounds;
+- weakest-target recomputation;
+- ambiguity reduction to `0.18 <= 0.20`;
+- `specReady=true`;
+- approval remains pending.
+
+A real live Case D is intentionally not auto-simulated because its core evidence is genuine user answers over multiple rounds. `--live D` therefore reports `runtime-validation-pending` rather than inventing an interview.
+
+## Remaining evidence boundary
+
+The following are not claimed:
+
+- independent serving-model identity attestation beyond accepted model/effort requests;
+- a live production-repository worktree merge/integration scenario (the isolation policy and fallback are regression-tested);
+- real user-interactive Case D.
 
 ## Installer boundary
 
 Codex CLI is not an installation prerequisite.
 
 - CLI absent: installation succeeds; CLI-dependent validation is WARN/SKIP.
-- CLI present: installer runs strict config validation and separately reports runtime authentication readiness.
-- credentials absent: runtime is reported `pending`; installation still succeeds.
-
-
-## Clarification Case D
-
-Deterministic Case D is verified. It exercises Round 0 plus three iterative interview rounds and asserts the generated report contents, ending at ambiguity 0.18 with approval still pending.
-
-The current Codex installation is authenticated, but a real user-interactive Case D remains pending by design. The live runner returns runtime-validation-pending instead of inventing answers for the user.
+- CLI present: installer performs strict config validation and reports runtime authentication readiness.
+- credentials absent: runtime is pending; installation still succeeds.

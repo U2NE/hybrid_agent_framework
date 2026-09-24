@@ -1,44 +1,53 @@
 # Codex Compatibility Notes
 
-## Pinned GSD evidence
+## Pinned upstream evidence
 
-At GSD Core `9db80da9a047ddaa9cc8812a5d6adab446fe8433`, the inspected adapter uses standalone agent TOMLs, a root `[agents]` table, and flat-dispatch-oriented configuration.
+Pinned GSD Core is `9db80da9a047ddaa9cc8812a5d6adab446fe8433`. The inspected adapter uses standalone agent TOMLs, a root `[agents]` table, and flat-dispatch-oriented configuration.
 
-## Codex 0.156.1 surface verified during this audit
+Hybrid also inspected the pinned OMC source for role semantics, planning convergence, review protocols, and deep-interview ontology behavior; Claude-specific aliases and nested Task assumptions are not copied.
 
-The current npm package is `@openai/codex 0.156.1`.
+## Codex 0.156.1 surface
 
-Verified locally with strict config loading:
+Verified locally:
 
-- `[agents]` and custom `[agents.<name>]` registration.
-- `description` and `config_file` role registration.
-- `agents.default_subagent_model` and `agents.default_subagent_reasoning_effort`.
-- `agents.max_concurrent_threads_per_session`.
-- `max_depth = 1` is accepted by the 0.156.1 strict parser in this repository's own config, but the installer no longer injects or rewrites a target repository's `max_depth`; flatness is enforced by lead-only dispatch plus worker no-delegation.
-- standalone agent config layers with `name`, `description`, and `developer_instructions`.
-- repository-local skills under `.agents/skills/*/SKILL.md` with YAML `name` and `description`.
+- `[agents]` and custom `[agents.<name>]` registration;
+- `description` and `config_file`;
+- `agents.max_concurrent_threads_per_session`;
+- standalone agent `name`, `description`, and `developer_instructions`;
+- repository-local skills under `.agents/skills/*/SKILL.md`;
+- model override via `-m/--model`;
+- reasoning override via `model_reasoning_effort`.
 
-Flat dispatch is therefore enforced primarily by architecture: only the lead dispatches sibling workers, every Hybrid worker explicitly forbids recursive delegation, dependency waves decide sibling eligibility, and same-file writers serialize.
+`max_depth = 1` is accepted by this Codex version in the framework's own config, but the installer does not inject or rewrite a target repository's `max_depth`. Flatness is enforced architecturally by lead-only dispatch plus worker no-delegation.
 
 ## Model catalog and routing
 
-`codex debug models` on 0.156.1 returned both concrete IDs:
+The local Codex 0.156.1 model cache reports:
 
-- `gpt-6-luna`
-- `gpt-6-sol`
+- `gpt-6-luna`: `low, medium, high, xhigh, max`;
+- `gpt-6-sol`: `low, medium, high, xhigh, max, ultra`.
 
-Hybrid stores those IDs only in `core/routing/model-routing.json`:
+Hybrid's operational ladder is intentionally narrower:
 
-- default tier: Luna;
-- heavy tier: Sol;
-- fallback: session inheritance.
+```text
+luna_medium -> luna_high -> luna_xhigh -> luna_max
+            -> sol_high -> sol_xhigh -> sol_max
+```
 
-Static role TOMLs do not pin a model. The lead resolves routing per stage so a high-judgment Sol stage can be followed by routine Luna workers. If an explicit model is unavailable or rejected, the intended retry omits model/reasoning overrides rather than guessing another ID.
+Static role TOMLs do not pin model/effort. The lead resolves routing per stage. Role names alone do not force Sol, and a heavy stage does not make later stages sticky-heavy.
 
-Hybrid intentionally does not set `agents.default_subagent_model` globally because a global Luna pin would prevent a no-override retry from reaching the normal Codex session/default inheritance path.
+## Authenticated runtime evidence
 
-## Runtime boundary
+Authenticated runtime validation is complete for:
 
-Strict-config loading is verified. Actual authenticated model-backed subagent spawn, sibling parallel execution, handoff/result collection, and runtime application/fallback of per-spawn model overrides remain `runtime validation pending` because this WSL has no Codex credentials.
+- model-backed subagent spawn and handoff;
+- sibling parallel execution (Case A);
+- same-file serialization (Case B);
+- conditional tester/code/security/verifier quality lanes (Case C);
+- accepted Luna medium/high/xhigh/max override requests;
+- bounded Luna-max security review;
+- deliberately rejected invalid model followed by a successful no-override session-inheritance retry.
 
-Use `scripts/runtime-smoke.mjs --live A|B|C` after authentication.
+Codex did not expose independent serving-model attestation in these traces. Hybrid therefore records requested model/effort and acceptance/rejection/fallback evidence without claiming an independently verified backend model identity.
+
+Real user-interactive clarification Case D remains pending by design.

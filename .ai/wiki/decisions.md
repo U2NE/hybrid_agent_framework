@@ -25,3 +25,7 @@ See [[index]] and [[architecture]].
 - Final verification is goal-backward: every SPEC acceptance criterion must trace through a PLAN task and implementation evidence to fresh independent verification as VERIFIED/PARTIAL/MISSING.
 - Security activation distinguishes strong trust-boundary changes from weak contextual words to avoid documentation/label false positives.
 - Edge probes are applicability-aware gates rather than seven mandatory questions on every task.
+
+- Authenticated A/B/C runtime smoke is semantic, not exit-code-only: output files plus runtime report evidence must pass the validator.
+- Runtime probes confirm Luna high/xhigh/max override request acceptance and invalid-model rejection followed by no-override session inheritance; serving-model identity is intentionally not claimed as independently attested.
+- OMC-style ontology convergence is separate from challenge mode: stable/renamed/new/removed entities drive an optional ontology-stabilization question strategy.

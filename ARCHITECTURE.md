@@ -90,4 +90,4 @@ Restart reads `AGENTS.md`, `PROJECT.md`, `STATE.md`, the active SPEC/PLAN, and a
 
 ## Runtime boundary
 
-Deterministic orchestration and Codex config surfaces are verified. Actual model-backed spawn, real sibling parallelism, live handoff/result collection, and live model override/fallback remain pending until Codex credentials are available. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.
+Deterministic orchestration and Codex config surfaces are verified, and authenticated A/B/C runtime smoke now verifies model-backed spawn, sibling parallelism, same-file serialization, quality-lane handoff/result collection, accepted Luna effort overrides, and rejected-model → no-override session-inheritance retry. Only real user-interactive Case D remains intentionally pending; serving-model identity is not independently attested. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.

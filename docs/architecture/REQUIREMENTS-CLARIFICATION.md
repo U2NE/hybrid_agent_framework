@@ -60,7 +60,7 @@ These are not claimed to be upstream OMC behavior.
 4. OMC says tied or “similarly weak” siblings should rotate, but does not define a numeric similarity distance in the skill. Hybrid uses a `0.05` score tolerance for deterministic rotation.
 5. Hybrid retains its pre-existing required durable fields such as goal/topology/acceptance criteria. There are no arbitrary per-dimension hard floors.
 6. Threshold precedence is exposed as a Node policy resolver (project > user > default) rather than copying Claude-specific settings file paths.
-7. Ontology challenge behavior is represented as a question strategy/state hook; Hybrid does not introduce a separate ontology/challenge agent tree.
+7. Ontology convergence is tracked separately from challenge mode: same-name entities are stable, same-type renames with >50% field overlap are changed, and stability is `(stable + changed) / current entities`. Low stability/new/changed entities can switch the next question to `ontology-stabilization` without consuming the one-shot Ontologist challenge mode. Hybrid still does not introduce a separate ontology/challenge agent tree.
 
 ## Completion states
 

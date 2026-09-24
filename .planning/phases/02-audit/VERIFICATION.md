@@ -1,6 +1,6 @@
 # VERIFICATION — Framework Audit
 
-Status: deterministic PASS; authenticated Case A runtime PASS; Cases B/C and fallback-negative-path pending.
+Status: deterministic PASS; authenticated Cases A/B/C semantic runtime PASS; routing override/fallback negative path PASS. Real user-interactive Case D remains outside this audit's automatic runtime scope.
 
 ## Completed checks
 
@@ -23,8 +23,11 @@ The implementation files were complete roughly 50 seconds after the lead started
 
 A direct Luna task also exposed `workspace-write` sandbox incompatibility with Node `child_process.spawnSync`: the sandbox returned `EPERM`, causing repeated diagnostic turns. Outside the Codex sandbox the generated tests passed.
 
-## Still pending
+## Authenticated follow-up now verified
 
 - live Case B same-file serialization;
-- live Case C security-reviewer + Sol escalation;
-- actual rejected-model → session-inheritance fallback.
+- live Case C tester + code-reviewer + Luna-max security-reviewer sibling QA wave followed by verifier;
+- Luna high/xhigh/max override request acceptance;
+- deliberately rejected invalid model → successful no-override session-inheritance retry.
+
+Codex does not independently attest the backend serving-model identity; the evidence is limited to accepted/rejected override requests and observed runtime behavior.

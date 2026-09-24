@@ -2,32 +2,39 @@
 
 This is a functional orchestration smoke, not a GSD/OMC/Hybrid benchmark.
 
-Before authentication, run:
+## Deterministic preflight
 
 ```bash
 npm run smoke:preflight
+npm run smoke:routing:preflight
 ```
 
-The deterministic preflight proves the framework-side invariants only. It does not prove Codex actually spawned subagents.
+Preflight proves framework-side policy only. It does not prove subagent runtime behavior.
 
-After `codex doctor --json` reports credentials ready, run one live case at a time:
+## Live cases
+
+When `codex doctor --json` reports credentials ready:
 
 ```bash
 node scripts/runtime-smoke.mjs --live A
 node scripts/runtime-smoke.mjs --live B
 node scripts/runtime-smoke.mjs --live C
+npm run smoke:routing:live
 ```
 
-Each live run creates an isolated temporary Git repository, installs Hybrid there, runs `codex exec --strict-config --json`, and preserves the raw JSONL trace plus stderr under that temporary repo's `.planning/runtime-smoke/`.
+Each A/B/C run creates an isolated temporary Git repository, installs Hybrid, runs `codex exec --strict-config --json`, and preserves JSONL/stderr under that workspace's `.planning/runtime-smoke/`.
 
-Case A uses two independent files. Expected runtime evidence is two sibling implementation workers eligible in the same wave, with no worker-to-worker recursive delegation.
+A live case is PASS only after semantic validation of the generated report and output files. Exit code alone is insufficient. The runner has a bounded timeout so a stalled orchestration does not hang indefinitely.
 
-Case B creates two distinct tasks that both modify `src/shared.js`. Expected runtime evidence is two scheduler waves and no concurrent same-file writers.
+- **Case A:** two independent files; requires observed sibling-worker overlap, correct outputs, flat delegation, accepted Luna medium requests, and final verifier completion.
+- **Case B:** two tasks modify `src/shared.js`; requires separate observed waves, no overlap, both final changes, and final verifier completion.
+- **Case C:** authorization change; implementer first, then tester + code reviewer + security reviewer as an independent QA wave, then verifier. The bounded security reviewer uses Luna max.
+- **Routing probe:** exercises Luna high/xhigh/max request acceptance plus invalid-model rejection and no-override session-inheritance retry.
 
-Case C changes auth/authorization logic. Expected preflight routing for this bounded security review is Luna max for the security reviewer while routine worker/QA stages remain on lower Luna effort unless another escalation condition exists.
+Authenticated A, B, and C all reached semantic PASS during the audit. The runtime does not expose independent backend model-attestation evidence, so reports state only that explicit model/effort requests were accepted.
 
-Case D is the clarification smoke. Its deterministic fixture starts from a deliberately vague login request and must show Round 0 topology confirmation, multiple one-question rounds, weakest-target recomputation, ambiguity reduction to <= 0.20, specReady/pass, and pending approval. The preflight asserts the report contents rather than trusting process exit status.
+## Case D
 
-A real live Case D is not automatically simulated because its core behavior requires genuine user answers across rounds. `node scripts/runtime-smoke.mjs --live D` therefore reports `runtime-validation-pending` rather than faking a successful interview.
+Case D is the clarification smoke. Its deterministic fixture verifies Round 0 topology confirmation, multiple one-question rounds, weakest-target recomputation, ambiguity reduction to <= 0.20, spec readiness, and pending approval.
 
-A live run is considered pending rather than failed when Codex credentials are unavailable. Config/schema validation is a separate completed check.
+A real live Case D is deliberately not auto-simulated because its core evidence is genuine user answers. `--live D` therefore returns `runtime-validation-pending` instead of inventing an interview.
