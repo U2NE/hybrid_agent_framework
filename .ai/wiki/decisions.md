@@ -8,6 +8,9 @@ updated: 2026-09-25
 
 - Flat dispatch is architectural: only the lead dispatches sibling workers and workers do not recursively delegate. The installer preserves a target-owned `max_depth` instead of using that key as the flatness mechanism.
 - Model routing is Luna-first by effort: medium/high/xhigh/max are exhausted as appropriate before Sol escalation. Concrete IDs and effort values live only in the routing policy.
+- Tier 0/1 avoid routine agent fan-out; expensive planning/testing/review/knowledge steps are conditional on evidence.
+- Fresh worker context is reduced by section priority rather than raw prefix truncation; acceptance/constraints/verification remain protected.
+- Parallel writers use worktrees only when side-effect/ownership risk warrants isolation; unavailable worktrees fall back to serialization.
 - Routing is recomputed per stage, so a Sol planning/review stage can downshift to Luna for later routine work.
 - Explicit model rejection falls back by retrying without model/reasoning overrides so Codex can inherit the session/default model.
 - `.planning/` is canonical; this wiki is derived.

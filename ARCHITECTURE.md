@@ -67,7 +67,7 @@ Only the lead dispatches siblings. Every standalone worker role explicitly forbi
 - heavy tier: Sol → `gpt-6-sol`;
 - fallback: session inheritance.
 
-Sol escalation is contextual rather than globally sticky. High ambiguity, architecture/refactor judgment, security-sensitive reasoning, complex cross-module debugging, difficult review, and repeated verification failure may escalate the relevant stage. The next ordinary worker stage is independently resolved and can return to Luna.
+Routing is contextual rather than globally sticky. High ambiguity, architecture/refactor judgment, security-sensitive reasoning, complex cross-module debugging, difficult review, and verification failures first raise Luna reasoning effort; Sol is reserved for Luna-exhausted or exceptional unresolved stages. The next ordinary stage is independently resolved and can return to Luna medium.
 
 Static role TOMLs do not pin model IDs. If a routed model is rejected/unavailable, the lead retries that spawn without a model/reasoning override and records the fallback.
 

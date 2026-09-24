@@ -11,8 +11,8 @@ Use this skill when the user asks to implement, change, fix, refactor, or add a 
 
 1. Read AGENTS.md, .planning/PROJECT.md, and .planning/STATE.md.
 2. Classify the task:
-   - Tier 0 trivial: execute directly, then independent verification.
-   - Tier 1 bounded: scout, plan-lite, execute, verify.
+   - Tier 0 trivial: implement directly, then lightweight verification without routine multi-agent QA fan-out.
+   - Tier 1 bounded: Scout only when repository discovery is needed, then implement → verifier; Planner/Tester/Code Reviewer are conditional on actual structure/behavior/logic risk.
    - Tier 2 complex: scout, spec-lite, approval, planning council, execution waves, independent QA/review.
    - Tier 3 ambiguous: scout, run the iterative `$clarify` deep-interview loop (Round 0 topology → one weakest-pair question per round → re-score until the ambiguity threshold), crystallize a durable SPEC pending explicit approval, then continue on the Tier 2 path.
 3. Never ask the user for facts available from the repo.

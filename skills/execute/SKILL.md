@@ -7,17 +7,19 @@ description: Execute an approved plan using dependency waves, flat sibling worke
 
 Compute dependency waves from the approved PLAN. One writer per file per wave.
 
-Independent tasks in the same wave are parallel-eligible sibling workers. Tasks with dependencies run in later waves. Same-file writers are serialized.
+Independent tasks in the same wave are parallel-eligible sibling workers. Tasks with dependencies run in later waves. Same-file writers are serialized. For multiple parallel writers, evaluate isolation: precise tiny ownership may share the workspace; lockfiles/generated outputs/migrations/formatters/low ownership confidence use worktree isolation when available, otherwise safe serialization.
 
 Give each implementer only a fresh context packet:
 - Goal
 - relevant files and interfaces
 - acceptance criteria
 - constraints and non-goals
-- dependency outputs
+- dependencies and dependency outputs
+- resolved decisions
+- required verification
 - assigned ownership
 
-Ordinary implementer work uses the Luna tier. Escalate only a genuinely complex debugging/judgment stage to Sol; recompute afterward so subsequent routine workers downshift to Luna.
+Worker context is budgeted and markdown-aware: preserve Goal, Acceptance Criteria, Constraints, relevant files/interfaces, dependencies, decisions, and required verification before lower-priority history/log prose. Ordinary implementer work starts on the appropriate Luna effort and only enters Sol after Luna is insufficient.
 
 Only the lead dispatches siblings. Workers do not spawn or delegate to other workers. The lead owns shared state, lifecycle, result collection, and integration.
 

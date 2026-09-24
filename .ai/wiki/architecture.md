@@ -6,7 +6,7 @@ updated: 2026-09-25
 ---
 # Architecture
 
-Hybrid uses lead-owned flat sibling dispatch, dependency-aware execution waves, Luna effort-ladder routing with conditional Sol escalation, independent verification, conditional security review, and canonical `.planning/` state.
+Hybrid uses lead-owned flat sibling dispatch, tier-aware minimal pipelines, dependency-aware execution waves, conditional worktree isolation, markdown-aware fresh-context reduction, Luna effort-ladder routing with conditional Sol escalation, independent verification, conditional security review, and canonical `.planning/` state.
 
 Independent tasks are parallel-eligible in the same wave; dependencies move work to later waves; same-file writers serialize; cycles reject.
 

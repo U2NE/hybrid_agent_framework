@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { renderPlanDocument, parsePlanDocument, compilePlan, PlanError } from '../../core/planning/index.mjs';
-import { buildWorkerContext } from '../../core/context/index.mjs';
+import { buildWorkerContext, measureContext, reduceMarkdownArtifact, renderWorkerContext } from '../../core/context/index.mjs';
 import { renderSpec, writePhaseArtifact } from '../../core/artifacts/index.mjs';
 
 const samplePlan = {
@@ -118,4 +118,111 @@ test('SPEC renderer preserves clarification provenance without replacing Hybrid 
   assert.match(spec, /Deferred components: recovery/);
   assert.match(spec, /## Goal/);
   assert.match(spec, /- Approval: pending/);
+});
+
+
+test('markdown-aware context reduction preserves critical late sections instead of raw prefix cutting', () => {
+  const markdown = [
+    '# Historical Commentary',
+    'old '.repeat(3000),
+    '',
+    '## Implementation Log',
+    'routine '.repeat(3000),
+    '',
+    '## Goal',
+    'MUST_KEEP_GOAL',
+    '',
+    '## Acceptance Criteria',
+    '- MUST_KEEP_LAST_CRITERION',
+    '',
+    '## Constraints',
+    '- MUST_KEEP_CONSTRAINT',
+    '',
+    '## Required Verification',
+    '- MUST_KEEP_VERIFY',
+  ].join('\n');
+
+  const reduced = reduceMarkdownArtifact(markdown, 1200);
+  assert.match(reduced, /MUST_KEEP_GOAL/);
+  assert.match(reduced, /MUST_KEEP_LAST_CRITERION/);
+  assert.match(reduced, /MUST_KEEP_CONSTRAINT/);
+  assert.match(reduced, /MUST_KEEP_VERIFY/);
+  assert.match(reduced, /context-reduced/);
+});
+
+test('worker context preserves fresh critical contract under an oversized dependency artifact', () => {
+  const context = buildWorkerContext({
+    goal: 'MUST_KEEP_GOAL',
+    files_modified: ['src/api.js'],
+    relevantInterfaces: ['ApiContract'],
+    depends_on: ['schema'],
+    acceptance_criteria: ['MUST_KEEP_ACCEPTANCE'],
+    constraints: ['MUST_KEEP_CONSTRAINT'],
+    decisions: ['MUST_KEEP_DECISION'],
+    verify: 'node --test tests/api.test.js',
+    dependencyOutputs: {
+      hugeArtifact: [
+        '# Old Commentary',
+        'noise '.repeat(6000),
+        '## Acceptance Criteria',
+        '- DEPENDENCY_ACCEPTANCE',
+        '## Constraints',
+        '- DEPENDENCY_CONSTRAINT',
+      ].join('\n'),
+      conversation: 'must be removed',
+    },
+  }, { budgetChars: 1800 });
+
+  const rendered = renderWorkerContext(context);
+  for (const marker of [
+    'MUST_KEEP_GOAL',
+    'MUST_KEEP_ACCEPTANCE',
+    'MUST_KEEP_CONSTRAINT',
+    'src/api.js',
+    'ApiContract',
+    'schema',
+    'MUST_KEEP_DECISION',
+    'node --test tests/api.test.js',
+    'DEPENDENCY_ACCEPTANCE',
+    'DEPENDENCY_CONSTRAINT',
+  ]) {
+    assert.ok(rendered.includes(marker), marker);
+  }
+  assert.doesNotMatch(rendered, /must be removed/);
+});
+
+test('worker context rendering has deterministic critical-section ordering and measurable budget metadata', () => {
+  const context = buildWorkerContext({
+    goal: 'G',
+    acceptance_criteria: ['A'],
+    constraints: ['C'],
+    files_modified: ['f.js'],
+    relevantInterfaces: ['I'],
+    depends_on: ['D'],
+    decisions: ['DEC'],
+    verify: 'VERIFY',
+  });
+  const rendered = renderWorkerContext(context);
+
+  const headings = [
+    '## Goal',
+    '## Acceptance Criteria',
+    '## Constraints',
+    '## Relevant Files',
+    '## Relevant Interfaces',
+    '## Dependencies',
+    '## Decisions',
+    '## Required Verification',
+  ];
+  let prior = -1;
+  for (const heading of headings) {
+    const index = rendered.indexOf(heading);
+    assert.ok(index > prior, heading);
+    prior = index;
+  }
+
+  const measurement = measureContext(context);
+  assert.ok(measurement.chars > 0);
+  assert.ok(measurement.bytes >= measurement.chars);
+  assert.ok(measurement.estimatedTokens > 0);
 });

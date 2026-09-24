@@ -99,3 +99,105 @@ function normalizeTask(task) {
     owner: task.owner || 'implementer',
   };
 }
+
+
+export function planExecutionIsolation(waves, options = {}) {
+  if (!Array.isArray(waves)) throw new SchedulerError('waves must be an array', 'INVALID');
+  const worktreeAvailable = options.worktreeAvailable !== false;
+  const plannedWaves = [];
+  const isolation = [];
+
+  for (const wave of waves) {
+    const assessment = assessWaveIsolation(wave, {
+      ...options,
+      worktreeAvailable,
+    });
+
+    if (assessment.mode === 'safe-serialization') {
+      for (const task of wave) {
+        plannedWaves.push([task]);
+        isolation.push({
+          wave: plannedWaves.length,
+          taskIds: [task.id],
+          mode: 'current-workspace',
+          reason: 'worktree-unavailable-safe-serialization',
+        });
+      }
+      continue;
+    }
+
+    plannedWaves.push(wave);
+    isolation.push({
+      wave: plannedWaves.length,
+      taskIds: wave.map((task) => task.id),
+      mode: assessment.mode,
+      reason: assessment.reason,
+    });
+  }
+
+  return {
+    waves: plannedWaves,
+    isolation,
+    worktreeAvailable,
+  };
+}
+
+export function assessWaveIsolation(wave, options = {}) {
+  const tasks = Array.isArray(wave) ? wave.map(normalizeTask) : [];
+  if (tasks.length <= 1) {
+    return { mode: 'current-workspace', reason: 'single-writer' };
+  }
+
+  const riskReasons = isolationRiskReasons(tasks, options);
+
+  if (!riskReasons.length) {
+    return {
+      mode: 'current-workspace',
+      reason: 'parallel-writers-have-precise-independent-ownership',
+    };
+  }
+
+  if (options.worktreeAvailable === false) {
+    return {
+      mode: 'safe-serialization',
+      reason: 'worktree-required-but-unavailable:' + riskReasons.join(','),
+      risks: riskReasons,
+    };
+  }
+
+  return {
+    mode: 'worktree',
+    reason: 'parallel-writer-isolation:' + riskReasons.join(','),
+    risks: riskReasons,
+  };
+}
+
+export function isolationRiskReasons(tasks, options = {}) {
+  const reasons = new Set();
+  const normalized = (Array.isArray(tasks) ? tasks : []).map(normalizeTask);
+
+  if (options.forceWorktree === true) reasons.add('explicit');
+  if (options.fileOwnershipConfidence === 'low') reasons.add('low-file-ownership-confidence');
+
+  for (const task of normalized) {
+    if (task.generated_files === true || task.generatedFiles === true) reasons.add('generated-files');
+    if (task.codegen === true) reasons.add('codegen');
+    if (task.formatter === true || task.formatter_wide === true) reasons.add('formatter');
+    if (task.migration === true) reasons.add('migration');
+    if (task.fileOwnershipConfidence === 'low') reasons.add('low-file-ownership-confidence');
+
+    for (const file of task.files_modified) {
+      const lower = String(file).toLowerCase();
+      if (
+        /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|composer\.lock|poetry\.lock|cargo\.lock)$/.test(lower)
+      ) {
+        reasons.add('lockfile');
+      }
+      if (/(^|\/)(migrations?|generated|dist|build)(\/|$)/.test(lower)) {
+        reasons.add('generated-or-migration-path');
+      }
+    }
+  }
+
+  return [...reasons].sort();
+}

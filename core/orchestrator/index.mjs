@@ -1,6 +1,6 @@
 import { classifyTask, TaskTier } from '../classifier/index.mjs';
 import { evaluateRequirements } from '../requirements/index.mjs';
-import { buildExecutionWaves } from '../scheduler/index.mjs';
+import { buildExecutionWaves, planExecutionIsolation } from '../scheduler/index.mjs';
 import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
 import { requiresSecurityReview } from '../verification/index.mjs';
 
@@ -19,33 +19,60 @@ const ROUTABLE_STAGES = new Set([
   'knowledge-synthesizer',
 ]);
 
-export function derivePipeline({ classification, securityReview = false }) {
+export function derivePipeline({
+  classification,
+  securityReview = false,
+  needs = {},
+}) {
   const tier = classification.tier;
+  const stages = [];
 
   if (tier === TaskTier.TRIVIAL) {
-    const stages = ['implementer', 'tester'];
-    if (securityReview) stages.push('code-reviewer', 'security-reviewer');
-    stages.push('verifier', 'knowledge-synthesizer');
+    stages.push('implementer');
+    if (needs.tester) stages.push('tester');
+    else stages.push('lightweight-verify');
+    if (securityReview) stages.push('security-reviewer');
+    if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
     return stages;
   }
 
-  const stages = ['scout'];
+  if (tier === TaskTier.BOUNDED) {
+    if (needs.scout) stages.push('scout');
+    if (needs.research) stages.push('researcher');
+    if (needs.planning) stages.push('planner');
+    if (needs.scheduler) stages.push('scheduler');
+    stages.push('implementer');
+    if (needs.tester) stages.push('tester');
+    if (needs.review) stages.push('code-reviewer');
+    if (securityReview) stages.push('security-reviewer');
+    stages.push('verifier');
+    if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
+    return stages;
+  }
+
+  // Complex and ambiguous work retain the full durable-spec and quality path,
+  // with expensive research/council/knowledge steps still conditional where
+  // they do not contribute to the actual task.
+  stages.push('scout');
 
   if (tier === TaskTier.AMBIGUOUS) {
     stages.push('requirements-gate', 'user-approval');
-  } else if (tier === TaskTier.COMPLEX) {
+  } else {
     stages.push('spec-lite', 'user-approval');
   }
 
-  stages.push('researcher', 'planner');
+  if (needs.research) stages.push('researcher');
+  stages.push('planner');
 
-  // Keep expensive architectural council work for genuinely complex/ambiguous
-  // tasks rather than every bounded change.
-  if (tier >= TaskTier.COMPLEX) stages.push('architect', 'plan-auditor');
+  if (tier === TaskTier.AMBIGUOUS || needs.council) {
+    stages.push('architect', 'plan-auditor');
+  }
 
   stages.push('scheduler', 'implementer', 'tester', 'code-reviewer');
   if (securityReview) stages.push('security-reviewer');
-  stages.push('verifier', 'integrate', 'full-test', 'knowledge-synthesizer', 'wiki-lint');
+  stages.push('verifier', 'integrate', 'full-test');
+
+  if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
 
   return stages;
 }
@@ -66,23 +93,94 @@ export function prepareExecution(input) {
     securityRelevant: input.securityRelevant,
   });
 
-  const waves = input.tasks ? buildExecutionWaves(input.tasks) : [];
-  const pipeline = derivePipeline({ classification, securityReview });
-  const routingContext = deriveRoutingContext(input, classification, requirements, securityReview);
+  const baseWaves = input.tasks ? buildExecutionWaves(input.tasks) : [];
+  const isolationPlan = planExecutionIsolation(baseWaves, {
+    worktreeAvailable: input.worktreeAvailable,
+    forceWorktree: input.forceWorktree === true,
+    fileOwnershipConfidence: input.fileOwnershipConfidence,
+  });
+
+  const routingContext = deriveRoutingContext(
+    input,
+    classification,
+    requirements,
+    securityReview
+  );
+  const needs = derivePipelineNeeds(input, classification, securityReview, routingContext);
+  const pipeline = derivePipeline({ classification, securityReview, needs });
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
 
   return {
     classification,
     requirements,
     securityReview,
+    needs,
     pipeline,
-    waves,
+    waves: isolationPlan.waves,
+    isolationPlan,
     routingContext,
     modelRouting,
     blocked:
       classification.tier === TaskTier.AMBIGUOUS &&
       requirements !== null &&
       requirements.pass === false,
+  };
+}
+
+export function derivePipelineNeeds(input, classification, securityReview, routingContext = {}) {
+  const tier = classification.tier;
+  const task = input.task && typeof input.task === 'object' ? input.task : {};
+  const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+  const evidence = classification.evidence || {};
+  const hasDependencies = tasks.some((item) => (item.depends_on || []).length > 0);
+  const acceptance = Array.isArray(task.acceptanceCriteria)
+    ? task.acceptanceCriteria
+    : Array.isArray(task.acceptance_criteria)
+      ? task.acceptance_criteria
+      : [];
+
+  const architectureKnowledge =
+    routingContext.architecturalChange === true ||
+    input.environmentChanged === true ||
+    input.setupChanged === true ||
+    input.newDurablePattern === true ||
+    input.importantDebuggingKnowledge === true ||
+    input.newTestingConvention === true;
+
+  return {
+    scout:
+      input.needsScout === true ||
+      tier >= TaskTier.COMPLEX ||
+      (tier === TaskTier.BOUNDED && Number(evidence.fileAnchors || 0) === 0),
+    research:
+      input.needsResearch === true ||
+      input.externalResearch === true ||
+      (tier === TaskTier.AMBIGUOUS && input.needsResearch !== false),
+    planning:
+      input.needsPlanning === true ||
+      (tier === TaskTier.BOUNDED && (tasks.length > 1 || hasDependencies)),
+    scheduler: tasks.length > 1,
+    tester:
+      input.needsTester === true ||
+      input.newBehavior === true ||
+      input.testSurfaceChanged === true ||
+      securityReview === true ||
+      (tier >= TaskTier.COMPLEX) ||
+      (tier === TaskTier.BOUNDED && input.acceptanceRequiresTest === true && acceptance.length > 0),
+    review:
+      input.needsReview === true ||
+      input.meaningfulLogicChange === true ||
+      securityReview === true ||
+      tier >= TaskTier.COMPLEX,
+    council:
+      input.needsCouncil === true ||
+      routingContext.architecturalChange === true ||
+      routingContext.importantArchitecturalDecision === true ||
+      routingContext.securitySensitive === true ||
+      routingContext.criticalPlanRisk === true,
+    knowledge:
+      input.durableKnowledgeChange === true ||
+      architectureKnowledge,
   };
 }
 
@@ -146,8 +244,6 @@ export function buildModelRouting(pipeline, context, routingOptions = {}) {
   for (const stage of pipeline) {
     if (!ROUTABLE_STAGES.has(stage)) continue;
 
-    // requirements-gate reuses the researcher agent surface but receives a
-    // stage-specific routing decision so high ambiguity can escalate to Sol.
     const agentRole = stage === 'requirements-gate' ? 'researcher' : stage;
     const routeRole = stage === 'requirements-gate' ? 'requirements-gate' : stage;
     const route = resolveRoleRouting(routeRole, {
