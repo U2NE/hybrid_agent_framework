@@ -131,3 +131,186 @@ function normalizePlanTask(task, index) {
     security_relevant: task.security_relevant === true,
   };
 }
+
+
+export function consensusPolicy(options = {}) {
+  const tier = Number(options.tier ?? 2);
+  const highRisk =
+    options.highRisk === true ||
+    options.deliberate === true ||
+    tier >= 3;
+
+  if (tier <= 1) {
+    return { enabled: false, maxIterations: 0, deliberate: false };
+  }
+
+  return {
+    enabled: options.enabled !== false,
+    maxIterations: highRisk ? 5 : 3,
+    deliberate: highRisk,
+  };
+}
+
+export function createConsensusState(options = {}) {
+  const policy = consensusPolicy(options);
+  return {
+    policy,
+    iteration: 0,
+    status: policy.enabled ? 'planning' : 'not-required',
+    approved: false,
+    executionApproved: false,
+    history: [],
+    bestPlan: options.plan || null,
+    remainingObjections: [],
+  };
+}
+
+export function recordConsensusReview(state, input = {}) {
+  if (!state || typeof state !== 'object') throw new PlanError('consensus state is required');
+  if (!state.policy?.enabled) {
+    return { ...structuredClone(state), status: 'not-required' };
+  }
+  if (state.status === 'pending-user-approval' || state.status === 'consensus-not-reached') {
+    throw new PlanError('consensus review is already terminal');
+  }
+
+  const verdict = normalizeReviewVerdict(input.auditor?.verdict || input.verdict);
+  const next = structuredClone(state);
+  next.iteration += 1;
+  next.bestPlan = input.plan || next.bestPlan;
+  next.history.push({
+    iteration: next.iteration,
+    planRevision: input.planRevision || next.iteration,
+    architect: normalizeReview(input.architect),
+    auditor: normalizeReview(input.auditor || { verdict }),
+  });
+
+  const objections = [
+    ...(input.architect?.objections || []),
+    ...(input.auditor?.objections || []),
+    ...(input.auditor?.findings || []),
+  ].map(String).filter(Boolean);
+  next.remainingObjections = [...new Set(objections)];
+
+  if (verdict === 'APPROVE') {
+    next.status = 'pending-user-approval';
+    next.approved = true;
+    next.executionApproved = false;
+    next.remainingObjections = [];
+    return next;
+  }
+
+  if (next.iteration >= next.policy.maxIterations) {
+    next.status = 'consensus-not-reached';
+    next.approved = false;
+    next.executionApproved = false;
+    return next;
+  }
+
+  next.status = 'revision-required';
+  next.approved = false;
+  next.executionApproved = false;
+  return next;
+}
+
+export function approveConsensusExecution(state) {
+  if (!state || state.status !== 'pending-user-approval' || state.approved !== true) {
+    throw new PlanError('execution approval requires an approved consensus plan pending user approval');
+  }
+  return {
+    ...structuredClone(state),
+    status: 'execution-approved',
+    executionApproved: true,
+  };
+}
+
+export function validateDeliberation(plan, options = {}) {
+  const deliberate = options.deliberate === true;
+  const missing = [];
+
+  if (!Array.isArray(plan?.principles) || plan.principles.length < 3) missing.push('principles');
+  if (!Array.isArray(plan?.decisionDrivers) || plan.decisionDrivers.length < 1) missing.push('decisionDrivers');
+
+  const optionsList = Array.isArray(plan?.viableOptions) ? plan.viableOptions : [];
+  if (optionsList.length < 2 && !hasText(plan?.alternativeInvalidationRationale)) {
+    missing.push('viableOptions');
+  }
+
+  if (deliberate) {
+    if (!Array.isArray(plan?.preMortem) || plan.preMortem.length < 3) missing.push('preMortem');
+    const strategy = plan?.testStrategy || {};
+    for (const lane of ['unit', 'integration', 'e2e', 'observability']) {
+      if (!hasText(strategy[lane]) && !(Array.isArray(strategy[lane]) && strategy[lane].length)) {
+        missing.push('testStrategy.' + lane);
+      }
+    }
+  }
+
+  const adr = plan?.adr || {};
+  for (const field of ['decision', 'drivers', 'alternatives', 'whyChosen', 'consequences', 'followUps']) {
+    if (!hasValue(adr[field])) missing.push('adr.' + field);
+  }
+
+  return {
+    deliberate,
+    pass: missing.length === 0,
+    missing,
+  };
+}
+
+export function buildPlanAcceptanceCoverage(plan, acceptanceCriteria = []) {
+  const criteria = (Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [])
+    .map(String)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+
+  const coverage = criteria.map((criterion, index) => {
+    const taskIds = tasks
+      .filter((task) =>
+        (task.acceptance_criteria || task.acceptanceCriteria || [])
+          .map(String)
+          .some((value) => value.trim() === criterion)
+      )
+      .map((task) => task.id);
+
+    return {
+      id: 'AC-' + String(index + 1).padStart(3, '0'),
+      criterion,
+      taskIds,
+      planned: taskIds.length > 0,
+    };
+  });
+
+  return {
+    pass: coverage.every((item) => item.planned),
+    coverage,
+    missing: coverage.filter((item) => !item.planned),
+  };
+}
+
+function normalizeReviewVerdict(value) {
+  const verdict = String(value || '').trim().toUpperCase();
+  if (!['APPROVE', 'ITERATE', 'REJECT'].includes(verdict)) {
+    throw new PlanError('review verdict must be APPROVE, ITERATE, or REJECT');
+  }
+  return verdict;
+}
+
+function normalizeReview(value = {}) {
+  return {
+    verdict: value.verdict ? String(value.verdict).toUpperCase() : null,
+    findings: Array.isArray(value.findings) ? value.findings : [],
+    objections: Array.isArray(value.objections) ? value.objections : [],
+  };
+}
+
+function hasText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasValue(value) {
+  if (hasText(value)) return true;
+  if (Array.isArray(value)) return value.length > 0;
+  return value != null && typeof value === 'object' && Object.keys(value).length > 0;
+}

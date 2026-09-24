@@ -19,3 +19,9 @@ updated: 2026-09-25
 - Fix loops stop after three targeted repairs.
 
 See [[index]] and [[architecture]].
+
+
+- Planning consensus is tier/risk bounded: none for Tier 0/1, max 3 for ordinary complex review, max 5 for high-risk; a capped rejection never becomes execution approval.
+- Final verification is goal-backward: every SPEC acceptance criterion must trace through a PLAN task and implementation evidence to fresh independent verification as VERIFIED/PARTIAL/MISSING.
+- Security activation distinguishes strong trust-boundary changes from weak contextual words to avoid documentation/label false positives.
+- Edge probes are applicability-aware gates rather than seven mandatory questions on every task.

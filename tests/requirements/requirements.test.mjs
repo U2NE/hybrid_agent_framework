@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyTask, TaskTier } from '../../core/classifier/index.mjs';
-import { buildEdgeProbeChecklist, computeAmbiguity, evaluateRequirements, nextRequirementQuestion } from '../../core/requirements/index.mjs';
+import { buildEdgeProbeChecklist, computeAmbiguity, evaluateEdgeProbeGate, evaluateRequirements, inferApplicableEdgeProbes, nextRequirementQuestion } from '../../core/requirements/index.mjs';
 
 test('ambiguous task triggers interview tier', () => {
   const result = classifyTask({ request: '알아서 좋게 만들어줘', ambiguous: true });
@@ -112,4 +112,60 @@ test('known file count alone does not make a mechanical bounded change complex',
     files: ['a.js', 'b.js', 'c.js', 'd.js', 'e.js', 'f.js'],
   });
   assert.equal(result.tier, TaskTier.BOUNDED);
+});
+
+
+test('edge probes are applicability-aware instead of forcing all seven axes', () => {
+  const sorting = inferApplicableEdgeProbes({
+    goal: 'Sort results with deterministic ordering and handle failures',
+  });
+  assert.ok(sorting.includes('ordering'));
+  assert.ok(sorting.includes('error behavior'));
+  assert.equal(sorting.includes('precision'), false);
+  assert.equal(sorting.includes('concurrency'), false);
+
+  const concurrent = inferApplicableEdgeProbes({
+    goal: 'Handle concurrent writes with retry and idempotency',
+  });
+  assert.ok(concurrent.includes('concurrency'));
+  assert.ok(concurrent.includes('idempotency'));
+});
+
+test('requirements edge-probe gate blocks only unresolved applicable probes', () => {
+  const spec = {
+    goal: 'Process concurrent writes with retry',
+    acceptanceCriteria: ['writes are safe'],
+    topology: [{
+      id: 'writer',
+      status: 'active',
+      clarity: { goal: 1, constraints: 1, criteria: 1 },
+    }],
+  };
+
+  const missing = evaluateRequirements(spec, {
+    requireTopology: true,
+    requireEdgeProbes: true,
+    resolvedEdgeProbes: ['error behavior'],
+  });
+  assert.equal(missing.pass, false);
+  assert.ok(missing.missing.includes('edgeProbes'));
+  assert.ok(missing.edgeProbeGate.missing.includes('concurrency'));
+  assert.ok(missing.edgeProbeGate.missing.includes('idempotency'));
+
+  const complete = evaluateRequirements(spec, {
+    requireTopology: true,
+    requireEdgeProbes: true,
+    resolvedEdgeProbes: ['error behavior', 'concurrency', 'idempotency'],
+  });
+  assert.equal(complete.edgeProbeGate.pass, true);
+  assert.equal(complete.pass, true);
+});
+
+test('bounded simple requirements do not pay irrelevant edge-probe costs', () => {
+  const gate = evaluateEdgeProbeGate({
+    goal: 'Rename a UI label',
+    acceptanceCriteria: ['label text is updated'],
+  }, { resolved: ['error behavior'] });
+  assert.deepEqual(gate.applicable, ['error behavior']);
+  assert.equal(gate.pass, true);
 });

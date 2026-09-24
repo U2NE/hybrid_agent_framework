@@ -85,12 +85,22 @@ export function evaluateRequirements(spec, options = {}) {
   if (!hasText(spec.goal) && !components.some((x) => hasText(x.goal))) missing.push('goal');
   if (!hasAcceptance(spec, components)) missing.push('acceptanceCriteria');
 
+  const edgeProbeGate = options.requireEdgeProbes
+    ? evaluateEdgeProbeGate(spec, {
+        resolved: options.resolvedEdgeProbes || spec.resolvedEdgeProbes || [],
+        request: options.request || spec.goal || '',
+      })
+    : { applicable: [], missing: [], pass: true };
+
+  if (!edgeProbeGate.pass) missing.push('edgeProbes');
+
   return {
     type,
     threshold,
     ambiguity,
     pass: ambiguity <= threshold && missing.length === 0,
     missing,
+    edgeProbeGate,
     components: componentResults,
     weakest: chooseWeakestComponentDimension(
       componentResults,
@@ -569,10 +579,70 @@ export function crystallizeInterviewSpec(state, spec, progress = null) {
   };
 }
 
-export function buildEdgeProbeChecklist(resolved = []) {
+export function inferApplicableEdgeProbes(spec = {}, options = {}) {
+  const text = [
+    options.request || '',
+    spec.goal || '',
+    ...(spec.acceptanceCriteria || []),
+    ...(spec.constraints || []),
+    ...(spec.edgeCases || []),
+  ].join(' ').toLowerCase();
+
+  const applicable = new Set();
+
+  // Error behavior is relevant to nearly every non-trivial behavior contract.
+  if (text.trim()) applicable.add('error behavior');
+
+  if (/empty|null|undefined|missing|없음|빈\s*(?:값|상태|목록)/i.test(text)) {
+    applicable.add('empty state');
+  }
+  if (/sort|order|rank|queue|sequence|priority|정렬|순서|우선순위/i.test(text)) {
+    applicable.add('ordering');
+  }
+  if (/float|decimal|round|precision|money|currency|percent|ratio|numeric|숫자|정밀|반올림|금액/i.test(text)) {
+    applicable.add('precision');
+  }
+  if (/retry|repeat|duplicate|idempot|request id|dedup|재시도|중복/i.test(text)) {
+    applicable.add('idempotency');
+  }
+  if (/concurr|parallel|race|lock|transaction|atomic|simultaneous|동시|병렬|경쟁/i.test(text)) {
+    applicable.add('concurrency');
+  }
+  if (/limit|boundary|range|minimum|maximum|min|max|offset|index|page|size|length|경계|최대|최소|범위/i.test(text)) {
+    applicable.add('boundary');
+  }
+
+  for (const explicit of spec.applicableEdgeProbes || []) {
+    const axis = String(explicit).toLowerCase();
+    if (EDGE_PROBE_AXES.includes(axis)) applicable.add(axis);
+  }
+
+  return EDGE_PROBE_AXES.filter((axis) => applicable.has(axis));
+}
+
+export function evaluateEdgeProbeGate(spec = {}, options = {}) {
+  const applicable = inferApplicableEdgeProbes(spec, options);
+  const resolved = new Set(
+    (Array.isArray(options.resolved) ? options.resolved : [])
+      .map(String)
+      .map((value) => value.toLowerCase())
+  );
+  const missing = applicable.filter((axis) => !resolved.has(axis));
+
+  return {
+    applicable,
+    resolved: applicable.filter((axis) => resolved.has(axis)),
+    missing,
+    pass: missing.length === 0,
+  };
+}
+
+export function buildEdgeProbeChecklist(resolved = [], applicable = EDGE_PROBE_AXES) {
   const covered = new Set((Array.isArray(resolved) ? resolved : []).map(String).map((x) => x.toLowerCase()));
+  const active = new Set((Array.isArray(applicable) ? applicable : EDGE_PROBE_AXES).map(String).map((x) => x.toLowerCase()));
   return EDGE_PROBE_AXES.map((axis) => ({
     axis,
+    applicable: active.has(axis),
     covered: covered.has(axis),
   }));
 }
