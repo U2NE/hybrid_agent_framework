@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { prepareExecution } from '../core/orchestrator/index.mjs';
@@ -133,25 +133,31 @@ export async function runLiveSmokeCase(name, options = {}) {
   const eventsPath = path.join(traceDir, 'events.jsonl');
   const stderrPath = path.join(traceDir, 'stderr.log');
 
-  try {
-    const { stdout, stderr } = await execFileAsync(codexBin, [
-      'exec',
-      '--strict-config',
-      '--json',
-      '--sandbox',
-      'workspace-write',
-      '--cd',
-      workspace,
-      spec.prompt,
-    ], { maxBuffer: 16 * 1024 * 1024 });
-    await fs.writeFile(eventsPath, stdout || '', 'utf8');
-    await fs.writeFile(stderrPath, stderr || '', 'utf8');
-    return { status: 'completed', case: key, workspace, eventsPath, stderrPath };
-  } catch (error) {
-    await fs.writeFile(eventsPath, String(error.stdout || ''), 'utf8');
-    await fs.writeFile(stderrPath, String(error.stderr || error.message || ''), 'utf8');
-    return { status: 'failed', case: key, workspace, eventsPath, stderrPath, error: String(error.message || error) };
-  }
+  const startedAt = Date.now();
+  const run = await runCodexExec(codexBin, [
+    'exec',
+    '--strict-config',
+    '--json',
+    '--sandbox',
+    options.sandbox || 'workspace-write',
+    '--cd',
+    workspace,
+    spec.prompt,
+  ], { cwd: workspace });
+
+  await fs.writeFile(eventsPath, run.stdout || '', 'utf8');
+  await fs.writeFile(stderrPath, run.stderr || '', 'utf8');
+
+  return {
+    status: run.code === 0 ? 'completed' : 'failed',
+    case: key,
+    workspace,
+    eventsPath,
+    stderrPath,
+    elapsedMs: Date.now() - startedAt,
+    exitCode: run.code,
+    ...(run.code === 0 ? {} : { error: run.error || 'codex exec failed' }),
+  };
 }
 
 async function seedCase(root, key) {
@@ -164,6 +170,35 @@ async function seedCase(root, key) {
   } else {
     await fs.writeFile(path.join(root, 'src', 'auth.js'), 'export function canAccess(user) { return Boolean(user); }\n');
   }
+}
+
+async function runCodexExec(codexBin, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(codexBin, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (error) => {
+      resolve({ code: -1, stdout, stderr, error: String(error.message || error) });
+    });
+    child.on('close', (code, signal) => {
+      resolve({
+        code: code ?? -1,
+        signal,
+        stdout,
+        stderr,
+        error: code === 0 ? null : ('codex exited with code ' + code + (signal ? ' signal ' + signal : '')),
+      });
+    });
+  });
 }
 
 async function runCodexDoctor(codexBin) {

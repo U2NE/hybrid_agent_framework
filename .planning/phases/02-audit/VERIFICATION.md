@@ -1,29 +1,30 @@
 # VERIFICATION — Framework Audit
 
-Status: deterministic PASS; authenticated Codex runtime validation pending.
+Status: deterministic PASS; authenticated Case A runtime PASS; Cases B/C and fallback-negative-path pending.
 
 ## Completed checks
 
 - `npm run check`: PASS.
 - `npm test`: PASS, 47/47.
 - `npm run smoke:preflight`: PASS for Cases A/B/C.
-- wiki lint: PASS; no broken/stale/orphan/oversized/contradictory top-level pages.
-- actual repository `.planning/STATE.md` recovery: PASS with `hybrid-state/v1`.
-- Codex 0.156.1 strict-config doctor: `config.load = ok`.
-- Codex 0.156.1 local model catalog: `gpt-6-luna` and `gpt-6-sol` present.
-- installer regression: CLI absent installs successfully and skips runtime validation; CLI present adds config/auth readiness checks.
-- security triggers: auth/authentication, authorization, crypto, secret, payment, file upload, SQL, network trust boundary, and permission all covered.
-- both pinned upstream repositories remain read-only analysis inputs and must remain clean.
+- wiki lint: PASS.
+- actual repository state recovery: PASS with `hybrid-state/v1`.
+- Codex 0.156.1 doctor: overall/auth/config/network all OK after ChatGPT device authentication.
+- model catalog: `gpt-6-luna` and `gpt-6-sol` present.
+- authenticated live Case A: PASS, 182322 ms.
+- two Luna implementation siblings overlapped in wave 1.
+- tester, reviewer, verifier handoffs completed.
+- all five Case A worker spawns accepted the requested Luna override; no fallback occurred.
+- upstream repositories remain clean.
 
-## Runtime validation pending
+## Runtime bottleneck observed
 
-The WSL has no global Codex CLI credentials. Live Case A returns `runtime-validation-pending` rather than claiming success.
+The implementation files were complete roughly 50 seconds after the lead started. The rest of the ~182 second run was mostly sequential QA/review/verification and lead orchestration. For tiny bounded work this is disproportionate overhead.
 
-Not yet verified:
-- real model-backed subagent spawn;
-- real sibling parallel execution;
-- live handoff/result collection;
-- actual per-spawn Luna/Sol model application;
-- actual rejected-model retry into session inheritance.
+A direct Luna task also exposed `workspace-write` sandbox incompatibility with Node `child_process.spawnSync`: the sandbox returned `EPERM`, causing repeated diagnostic turns. Outside the Codex sandbox the generated tests passed.
 
-Run `node scripts/runtime-smoke.mjs --live A`, `--live B`, and `--live C` after Codex authentication.
+## Still pending
+
+- live Case B same-file serialization;
+- live Case C security-reviewer + Sol escalation;
+- actual rejected-model → session-inheritance fallback.
