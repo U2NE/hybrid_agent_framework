@@ -13,14 +13,15 @@ test('runtime smoke Case B preflight proves same-file serialization', () => {
   assert.deepEqual(result.waves, [['first'], ['second']]);
 });
 
-test('runtime smoke Case C preflight proves security quality-lane activation and Sol reviewer route', () => {
+test('runtime smoke Case C preflight proves security quality-lane activation and bounded Luna-max reviewer route', () => {
   const result = preflightSmokeCase('C');
   assert.equal(result.securityReview, true);
   for (const stage of ['tester', 'code-reviewer', 'security-reviewer', 'verifier']) {
     assert.ok(result.pipeline.includes(stage));
   }
   const security = result.modelRouting.stages.find((entry) => entry.stage === 'security-reviewer');
-  assert.equal(security.model, 'gpt-6-sol');
+  assert.equal(security.model, 'gpt-6-luna');
+  assert.equal(security.routeLevel, 'luna_max');
 });
 
 

@@ -46,7 +46,7 @@ Bounded work uses plan-lite. Complex/ambiguous work uses:
 
 `Researcher → Planner → Architect → Plan Auditor`
 
-Architect and Plan Auditor are high-judgment Sol-tier stages. Ordinary Planner work stays on Luna unless task risk/complexity escalates it.
+Architect and Plan Auditor are high-judgment stages, but their role names do not force Sol: ordinary review uses Luna xhigh and higher-risk work uses Luna max before unresolved cases enter Sol.
 
 ## Execution
 
@@ -75,7 +75,7 @@ Static role TOMLs do not pin model IDs. If a routed model is rejected/unavailabl
 
 `Implementer → Tester → Code Reviewer → [Security Reviewer] → Verifier`
 
-Security Reviewer is conditional and Sol-tier. Tester and routine Verifier remain Luna. Code Reviewer escalates only for difficult/architectural/security-sensitive/repeated-failure reasoning.
+Security Reviewer is conditional: bounded security review uses Luna max, while complex exploit/trust-boundary or critical unresolved judgment may enter Sol. Tester and routine Verifier remain Luna-first.
 
 ## State and recovery
 

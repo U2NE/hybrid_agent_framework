@@ -74,16 +74,23 @@ export async function installProject(targetRoot, options = {}) {
     target: path.join(root, '.hybrid', 'LICENSE'),
   });
 
-  // Target repositories use Hybrid-prefixed custom-agent names so installation
-  // does not shadow pre-existing project roles. The config file path remains
-  // stable across reinstall; only its internal standalone-agent name is
-  // rewritten to match the registered role.
+  // Installed custom-agent registrations and files both use the Hybrid prefix.
+  // This avoids overwriting a target repository's own scout.toml/planner.toml
+  // and similar conventional role filenames.
+  const priorHybridInstall = await exists(path.join(root, '.hybrid', 'manifest.json'));
   for (const role of Object.keys(HYBRID_ROLES)) {
     const source = path.join(sourceRoot, '.codex', 'agents', role + '.toml');
     const agentContent = await fs.readFile(source, 'utf8');
+    const installedRole = roleName(role);
+    const target = path.join(root, '.codex', 'agents', installedRole + '.toml');
+
+    if (!priorHybridInstall && await exists(target)) {
+      throw new Error('refusing to overwrite pre-existing project agent file: ' + target);
+    }
+
     operations.push({
       kind: 'write',
-      target: path.join(root, '.codex', 'agents', role + '.toml'),
+      target,
       content: renderInstalledAgentConfig(agentContent, role),
     });
   }
@@ -104,13 +111,12 @@ export async function installProject(targetRoot, options = {}) {
     version: '0.1.0',
     installedAt: new Date().toISOString(),
     codexSurface: {
-      roles: '.codex/config.toml + .codex/agents/*.toml',
+      roles: '.codex/config.toml + .codex/agents/hybrid-*.toml',
       skills: '.agents/skills/*/SKILL.md',
     },
     modelRouting: {
       policy: '.hybrid/core/routing/model-routing.json',
-      defaultTier: 'luna',
-      heavyTier: 'sol',
+      defaultRoute: 'luna_medium',
       fallback: 'session-inheritance',
     },
     sourceUpstreams: {
@@ -273,16 +279,14 @@ export function ensureCurrentAgentsConfig(content) {
     }
   }
 
-  // Codex 0.156.1 strict parsing accepts max_depth. The current public
-  // reference does not document it, so Hybrid treats it only as a compatibility
-  // guard. Flatness is enforced by lead-only sibling dispatch and worker
-  // no-delegation instructions. The documented concurrency setting is added
-  // only when the target has not already selected a thread limit.
+  // Flatness is enforced by lead-only sibling dispatch and worker
+  // no-delegation instructions. Preserve a target-owned max_depth exactly when
+  // present; Hybrid does not depend on rewriting it. Add only documented
+  // concurrency capacity when the target has not selected a thread limit.
   const agentsIndex = lines.findIndex((line) => line.trim() === '[agents]');
   if (agentsIndex >= 0) {
     const end = sectionEnd(lines, agentsIndex);
     const enabledIndex = findKey(lines, agentsIndex + 1, end, 'enabled');
-    const depthIndex = findKey(lines, agentsIndex + 1, end, 'max_depth');
     const concurrentIndex = findKey(
       lines,
       agentsIndex + 1,
@@ -292,11 +296,9 @@ export function ensureCurrentAgentsConfig(content) {
     const legacyThreadsIndex = findKey(lines, agentsIndex + 1, end, 'max_threads');
 
     if (enabledIndex >= 0) lines[enabledIndex] = 'enabled = true';
-    if (depthIndex >= 0) lines[depthIndex] = 'max_depth = 1';
 
     const additions = [];
     if (enabledIndex < 0) additions.push('enabled = true');
-    if (depthIndex < 0) additions.push('max_depth = 1');
     if (concurrentIndex < 0 && legacyThreadsIndex < 0) {
       additions.push('max_concurrent_threads_per_session = 8');
     }
@@ -306,7 +308,6 @@ export function ensureCurrentAgentsConfig(content) {
     const rootBlock = [
       '[agents]',
       'enabled = true',
-      'max_depth = 1',
       'max_concurrent_threads_per_session = 8',
       '',
     ];
@@ -326,7 +327,7 @@ export function ensureCurrentAgentsConfig(content) {
   for (const [role, description] of Object.entries(HYBRID_ROLES)) {
     lines.push(`[agents."${roleName(role)}"]`);
     lines.push('description = ' + JSON.stringify(description));
-    lines.push('config_file = ' + JSON.stringify('agents/' + role + '.toml'));
+    lines.push('config_file = ' + JSON.stringify('agents/' + roleName(role) + '.toml'));
     lines.push('');
   }
   lines.push(CONFIG_END);
@@ -351,7 +352,7 @@ export function mergeAgentsInstructions(content) {
     '- Scout the repository before asking user questions that code can answer.',
     '- Keep dispatch flat: only the lead spawns sibling Hybrid roles; workers return results and never recursively delegate.',
     '- Serialize same-file writers and respect task dependencies.',
-    '- Route ordinary worker stages to the Luna tier; escalate only high-judgment/risk stages to Sol according to `.hybrid/core/routing/model-routing.json`.',
+    '- Route work through the Luna effort ladder first; use Sol only after Luna max is insufficient or the task is exceptionally difficult/critical according to `.hybrid/core/routing/model-routing.json`.',
     '- If an explicit routed model is unavailable/rejected, retry that spawn without model/effort override and record session-inheritance fallback.',
     '- Separate implementation from final testing/review/verification.',
     '- Run security review only for trust-boundary-sensitive changes.',

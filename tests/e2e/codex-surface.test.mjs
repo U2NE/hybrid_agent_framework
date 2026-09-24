@@ -7,6 +7,7 @@ import {
   MODEL_ROUTING_POLICY,
   fallbackToSessionInheritance,
   resolveRoleRouting,
+  routeForDifficulty,
 } from '../../core/routing/index.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,61 +57,131 @@ test('repository-local skills have one canonical source and valid frontmatter', 
   }
 });
 
-test('routing policy defaults normal work to Luna and escalates only high-judgment work to Sol', () => {
-  assert.equal(MODEL_ROUTING_POLICY.default_model_tier, 'luna');
-  assert.equal(MODEL_ROUTING_POLICY.heavy_model_tier, 'sol');
-
-  const worker = resolveRoleRouting('implementer');
-  assert.equal(worker.modelTier, 'luna');
-  assert.equal(worker.model, 'gpt-6-luna');
-  assert.equal(worker.inheritSessionModel, false);
-
-  const routinePlanner = resolveRoleRouting('planner');
-  assert.equal(routinePlanner.modelTier, 'luna');
-  assert.equal(routinePlanner.model, 'gpt-6-luna');
-
-  const complexTaskPlanner = resolveRoleRouting('planner', { context: { classification: 'complex' } });
-  assert.equal(complexTaskPlanner.modelTier, 'sol');
-  assert.equal(complexTaskPlanner.model, 'gpt-6-sol');
-  assert.ok(complexTaskPlanner.escalationReasons.includes('complex-planning'));
-
-  const complexPlanner = resolveRoleRouting('planner', { context: { architecturalChange: true } });
-  assert.equal(complexPlanner.modelTier, 'sol');
-  assert.equal(complexPlanner.model, 'gpt-6-sol');
-
-  const architect = resolveRoleRouting('architect');
-  assert.equal(architect.modelTier, 'sol');
-  assert.equal(architect.model, 'gpt-6-sol');
-
-  const complexDebugger = resolveRoleRouting('implementer', {
-    context: { complexDebugging: true, crossModuleDebugging: true },
-  });
-  assert.equal(complexDebugger.modelTier, 'sol');
-  assert.equal(complexDebugger.model, 'gpt-6-sol');
-
-  const routineVerifier = resolveRoleRouting('verifier');
-  assert.equal(routineVerifier.modelTier, 'luna');
-  const escalatedVerifier = resolveRoleRouting('verifier', { context: { verificationFailures: 2 } });
-  assert.equal(escalatedVerifier.modelTier, 'sol');
+test('routing policy records the verified Codex 0.156.1 effort surface', () => {
+  assert.equal(MODEL_ROUTING_POLICY.schema, 'hybrid-model-routing/v2');
+  assert.deepEqual(
+    MODEL_ROUTING_POLICY.runtime_surface.luna_supported_efforts,
+    ['low', 'medium', 'high', 'xhigh', 'max']
+  );
+  assert.deepEqual(
+    MODEL_ROUTING_POLICY.runtime_surface.sol_supported_efforts,
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+  );
+  assert.equal(MODEL_ROUTING_POLICY.default_route, 'luna_medium');
 });
 
-test('routing downshifts after a Sol stage and fails safe to session inheritance when override is unavailable', () => {
-  const heavy = resolveRoleRouting('code-reviewer', { context: { difficultReview: true } });
-  assert.equal(heavy.model, 'gpt-6-sol');
+test('difficulty profiles use the Luna effort ladder before Sol', () => {
+  const expected = {
+    routine: ['luna_medium', 'gpt-6-luna', 'medium'],
+    moderate: ['luna_high', 'gpt-6-luna', 'high'],
+    hard: ['luna_xhigh', 'gpt-6-luna', 'xhigh'],
+    very_hard: ['luna_max', 'gpt-6-luna', 'max'],
+    exceptional: ['sol_high', 'gpt-6-sol', 'high'],
+    critical: ['sol_xhigh', 'gpt-6-sol', 'xhigh'],
+    extreme: ['sol_max', 'gpt-6-sol', 'max'],
+  };
+
+  for (const [difficulty, [level, model, effort]] of Object.entries(expected)) {
+    assert.equal(routeForDifficulty(difficulty), level);
+    const route = resolveRoleRouting('implementer', { routeLevel: level });
+    assert.equal(route.routeLevel, level);
+    assert.equal(route.model, model);
+    assert.equal(route.reasoningEffort, effort);
+  }
+});
+
+test('role name alone never forces architect, plan auditor, or security reviewer onto Sol', () => {
+  const architect = resolveRoleRouting('architect');
+  assert.equal(architect.routeLevel, 'luna_xhigh');
+  assert.equal(architect.modelTier, 'luna');
+
+  const auditor = resolveRoleRouting('plan-auditor');
+  assert.equal(auditor.routeLevel, 'luna_xhigh');
+  assert.equal(auditor.modelTier, 'luna');
+
+  const security = resolveRoleRouting('security-reviewer');
+  assert.equal(security.routeLevel, 'luna_max');
+  assert.equal(security.modelTier, 'luna');
+});
+
+test('architecture and security reasoning escalate by difficulty, not role name', () => {
+  const importantArchitect = resolveRoleRouting('architect', {
+    context: { importantArchitecturalDecision: true },
+  });
+  assert.equal(importantArchitect.routeLevel, 'luna_max');
+
+  const unresolvedArchitect = resolveRoleRouting('architect', {
+    context: { unresolvedArchitecture: true },
+  });
+  assert.equal(unresolvedArchitect.routeLevel, 'sol_high');
+
+  const boundedSecurity = resolveRoleRouting('security-reviewer', {
+    context: { securitySensitive: true },
+  });
+  assert.equal(boundedSecurity.routeLevel, 'luna_max');
+
+  const exploitSecurity = resolveRoleRouting('security-reviewer', {
+    context: { complexSecurityReasoning: true, exploitReasoning: true },
+  });
+  assert.equal(exploitSecurity.routeLevel, 'sol_high');
+
+  const criticalSecurity = resolveRoleRouting('security-reviewer', {
+    context: { criticalSecurityJudgment: true },
+  });
+  assert.equal(criticalSecurity.routeLevel, 'sol_max');
+});
+
+test('failure-driven escalation stays in Luna before Sol and is stage-local', () => {
+  const firstFailure = resolveRoleRouting('verifier', {
+    context: { verificationFailures: 1 },
+  });
+  assert.equal(firstFailure.routeLevel, 'luna_high');
+  assert.equal(firstFailure.modelTier, 'luna');
+
+  const secondFailure = resolveRoleRouting('verifier', {
+    context: { verificationFailures: 2 },
+  });
+  assert.equal(secondFailure.routeLevel, 'luna_max');
+  assert.equal(secondFailure.modelTier, 'luna');
+
+  const lunaMaxRepeat = resolveRoleRouting('security-reviewer', {
+    context: { verificationFailures: 1, lunaMaxFailed: true, repeatedSameFailure: true },
+  });
+  assert.equal(lunaMaxRepeat.routeLevel, 'sol_high');
 
   const nextRoutineWorker = resolveRoleRouting('implementer');
+  assert.equal(nextRoutineWorker.routeLevel, 'luna_medium');
   assert.equal(nextRoutineWorker.model, 'gpt-6-luna');
+});
 
-  const unsupportedOverride = resolveRoleRouting('security-reviewer', { modelOverrideSupported: false });
+test('routing fails safe to session inheritance when model or effort override is unavailable', () => {
+  const route = resolveRoleRouting('security-reviewer', {
+    context: { complexSecurityReasoning: true },
+  });
+  assert.equal(route.model, 'gpt-6-sol');
+
+  const unsupportedOverride = resolveRoleRouting('security-reviewer', {
+    modelOverrideSupported: false,
+  });
   assert.equal(unsupportedOverride.model, null);
   assert.equal(unsupportedOverride.inheritSessionModel, true);
   assert.equal(unsupportedOverride.fallbackReason, 'model-override-unsupported');
 
-  const missingModel = resolveRoleRouting('architect', { supportedModels: ['gpt-6-luna'] });
+  const missingModel = resolveRoleRouting('architect', {
+    supportedModels: ['gpt-6-luna'],
+    context: { unresolvedArchitecture: true },
+  });
   assert.equal(missingModel.model, null);
   assert.equal(missingModel.fallbackReason, 'model-not-available');
 
-  const runtimeRejected = fallbackToSessionInheritance(heavy);
+  const missingEffort = resolveRoleRouting('implementer', {
+    routeLevel: 'luna_max',
+    supportedEffortsByModel: { 'gpt-6-luna': ['medium', 'high', 'xhigh'] },
+  });
+  assert.equal(missingEffort.model, null);
+  assert.equal(missingEffort.fallbackReason, 'reasoning-effort-not-available');
+
+  const runtimeRejected = fallbackToSessionInheritance(route);
   assert.equal(runtimeRejected.model, null);
   assert.equal(runtimeRejected.inheritSessionModel, true);
   assert.equal(runtimeRejected.fallbackReason, 'runtime-model-rejected');

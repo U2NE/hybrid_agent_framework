@@ -60,3 +60,56 @@ test('edge probe checklist covers the required probe axes', () => {
   assert.ok(checklist.some((item) => item.axis === 'boundary' && item.covered));
   assert.ok(checklist.some((item) => item.axis === 'error behavior' && !item.covered));
 });
+
+
+test('ambiguous Korean hint with concrete file symbol and behavior remains bounded', () => {
+  const result = classifyTask({
+    request: '이 기능을 src/auth.js의 login()에서 실패할 때 401 반환하도록 수정',
+  });
+  assert.equal(result.tier, TaskTier.BOUNDED);
+  assert.equal(result.requiresInterview, false);
+  assert.ok(result.evidence.anchorCount >= 2);
+});
+
+test('vague login request without concrete anchors remains ambiguous', () => {
+  const result = classifyTask({ request: '알아서 로그인 잘 만들어줘' });
+  assert.equal(result.tier, TaskTier.AMBIGUOUS);
+  assert.equal(result.requiresInterview, true);
+});
+
+test('mechanical change across five locale files remains bounded', () => {
+  const result = classifyTask({
+    request: '5개 locale 파일의 동일 문자열을 일괄 변경해줘',
+    files: [
+      'locales/en.json',
+      'locales/ko.json',
+      'locales/ja.json',
+      'locales/fr.json',
+      'locales/de.json',
+    ],
+  });
+  assert.equal(result.tier, TaskTier.BOUNDED);
+});
+
+test('architecture refactor across session and token middleware is complex', () => {
+  const result = classifyTask({
+    request: 'auth architecture refactor across session/token middleware',
+  });
+  assert.equal(result.tier, TaskTier.COMPLEX);
+});
+
+test('localized refactor with concrete file and symbol is bounded', () => {
+  const result = classifyTask({
+    request: 'refactor src/auth.js의 login()만 정리해줘',
+  });
+  assert.equal(result.tier, TaskTier.BOUNDED);
+});
+
+test('known file count alone does not make a mechanical bounded change complex', () => {
+  const result = classifyTask({
+    request: 'same replacement in these files',
+    mechanical: true,
+    files: ['a.js', 'b.js', 'c.js', 'd.js', 'e.js', 'f.js'],
+  });
+  assert.equal(result.tier, TaskTier.BOUNDED);
+});

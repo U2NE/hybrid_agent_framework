@@ -15,7 +15,7 @@ For bounded work, use plan-lite and do not invoke Architect/Plan Auditor unless 
 Model routing:
 - Researcher and ordinary Planner work default to Luna.
 - Planner escalates to Sol for high ambiguity, architectural/large-refactor decisions, security-sensitive planning, or complex cross-module debugging.
-- Architect and Plan Auditor are Sol-tier roles.
+- Architect and Plan Auditor use Luna xhigh/max by default according to stage risk; unresolved exceptional planning/architecture may escalate to Sol.
 - Their Sol use does not pin later worker stages to Sol.
 
 The plan must declare:

@@ -21,7 +21,7 @@ Use this skill when the user asks to implement, change, fix, refactor, or add a 
 6. Keep the lead thin. Only the lead spawns sibling Hybrid agents; workers never recursively delegate.
 7. Before each agent spawn, use the Hybrid model-routing decision:
    - normal stage: Luna tier;
-   - high ambiguity, architectural decision/refactor, security-sensitive reasoning, complex cross-module debugging/review, or repeated verification failure: Sol tier;
+   - choose Luna medium/high/xhigh/max from stage difficulty; use Sol only after Luna max is insufficient or for exceptionally difficult/critical unresolved reasoning;
    - after a Sol-only stage, recompute the next stage independently so normal implementer/tester/documentation work can downshift to Luna.
 8. If Codex rejects or cannot use the explicit routed model, retry that spawn once without model/reasoning override and record session-inheritance fallback. Never guess a replacement model ID.
 9. Run tester → code reviewer → conditional security reviewer → verifier.

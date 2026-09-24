@@ -81,7 +81,7 @@ export const SMOKE_CASES = Object.freeze({
       'Use $hybrid for a security-sensitive auth change.',
       'Modify src/auth.js so canAccess(user) returns true only when user exists and user.role === "admin".',
       'This must activate tester, code reviewer, security reviewer, and verifier as separate quality roles.',
-      'The security reviewer must use the Sol routing tier; routine tester/verifier work should remain/downshift to Luna unless another escalation condition is present.',
+      'The bounded security reviewer should use Luna max; routine tester/verifier work should remain/downshift to Luna unless another escalation condition is present.',
       'Do not let workers delegate.',
       'Record planned/observed roles, security activation, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json.',
     ].join('\n'),
@@ -119,7 +119,7 @@ export function preflightSmokeCase(name) {
   if (key === 'B') assert.equal(result.waves.length, 2);
   if (key === 'C') {
     for (const stage of ['tester', 'code-reviewer', 'security-reviewer', 'verifier']) assert.ok(result.pipeline.includes(stage));
-    assert.equal(route(result, 'security-reviewer').model, 'gpt-6-sol');
+    assert.equal(route(result, 'security-reviewer').routeLevel, 'luna_max');
   }
 
   return {

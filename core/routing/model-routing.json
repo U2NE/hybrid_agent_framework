@@ -1,16 +1,38 @@
 {
-  "schema": "hybrid-model-routing/v1",
+  "schema": "hybrid-model-routing/v2",
   "default_model_tier": "luna",
   "heavy_model_tier": "sol",
+  "default_route": "luna_medium",
   "fallback": "session-inheritance",
-  "tiers": {
-    "luna": {
-      "model": "gpt-6-luna",
-      "reasoning_effort": "medium"
-    },
-    "sol": {
-      "model": "gpt-6-sol",
-      "reasoning_effort": "high"
-    }
+  "runtime_surface": {
+    "codex_version_verified": "0.156.1",
+    "model_override": "--model / -m",
+    "reasoning_override": "model_reasoning_effort",
+    "luna_supported_efforts": ["low", "medium", "high", "xhigh", "max"],
+    "sol_supported_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+  },
+  "levels": {
+    "luna_medium": {"family":"luna","model":"gpt-6-luna","reasoning_effort":"medium","rank":10},
+    "luna_high": {"family":"luna","model":"gpt-6-luna","reasoning_effort":"high","rank":20},
+    "luna_xhigh": {"family":"luna","model":"gpt-6-luna","reasoning_effort":"xhigh","rank":30},
+    "luna_max": {"family":"luna","model":"gpt-6-luna","reasoning_effort":"max","rank":40},
+    "sol_high": {"family":"sol","model":"gpt-6-sol","reasoning_effort":"high","rank":50},
+    "sol_xhigh": {"family":"sol","model":"gpt-6-sol","reasoning_effort":"xhigh","rank":60},
+    "sol_max": {"family":"sol","model":"gpt-6-sol","reasoning_effort":"max","rank":70}
+  },
+  "profiles": {
+    "routine":"luna_medium",
+    "moderate":"luna_high",
+    "hard":"luna_xhigh",
+    "very_hard":"luna_max",
+    "exceptional":"sol_high",
+    "critical":"sol_xhigh",
+    "extreme":"sol_max"
+  },
+  "failure_policy": {
+    "first_failure":"increase_within_family",
+    "second_failure":"luna_max_before_sol",
+    "luna_max_repeat":"sol_high",
+    "bounded_retry_limit":3
   }
 }

@@ -14,7 +14,7 @@ Verified locally with strict config loading:
 - `description` and `config_file` role registration.
 - `agents.default_subagent_model` and `agents.default_subagent_reasoning_effort`.
 - `agents.max_concurrent_threads_per_session`.
-- `max_depth = 1` is accepted by the 0.156.1 strict parser, but Hybrid treats it only as a compatibility guard because the current public config reference does not document it.
+- `max_depth = 1` is accepted by the 0.156.1 strict parser in this repository's own config, but the installer no longer injects or rewrites a target repository's `max_depth`; flatness is enforced by lead-only dispatch plus worker no-delegation.
 - standalone agent config layers with `name`, `description`, and `developer_instructions`.
 - repository-local skills under `.agents/skills/*/SKILL.md` with YAML `name` and `description`.
 

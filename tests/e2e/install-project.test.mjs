@@ -44,22 +44,22 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   const config = await fs.readFile(path.join(target, '.codex', 'config.toml'), 'utf8');
   assert.match(config, /max_threads = 4/);
   assert.match(config, /enabled = true/);
-  assert.match(config, /max_depth = 1/);
+  assert.match(config, /max_depth = 7/);
   assert.match(config, /\[agents\."hybrid-scout"\]/);
-  assert.match(config, /config_file = "agents\/scout\.toml"/);
+  assert.match(config, /config_file = "agents\/hybrid-scout\.toml"/);
 
   const agents = await fs.readFile(path.join(target, 'AGENTS.md'), 'utf8');
   assert.match(agents, /# Existing Rules/);
   assert.match(agents, /hybrid-agent-framework:start/);
   assert.match(agents, /\$hybrid/);
-  assert.match(agents, /Luna tier/);
+  assert.match(agents, /Luna effort ladder/);
   assert.match(agents, /session-inheritance fallback/);
 
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);
   await assert.rejects(fs.access(path.join(target, '.codex', 'skills', 'hybrid', 'SKILL.md')));
 
-  const role = await fs.readFile(path.join(target, '.codex', 'agents', 'scout.toml'), 'utf8');
+  const role = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-scout.toml'), 'utf8');
   assert.match(role, /^name = "hybrid-scout"$/m);
   assert.match(role, /^description = "Repository scout"$/m);
   assert.match(role, /developer_instructions/);
@@ -155,4 +155,51 @@ test('dry run does not write project files', async () => {
   const { stdout } = await execFileAsync(process.execPath, [installer, target, '--dry-run'], { env: noCodexEnv() });
   assert.match(stdout, /Dry run complete/);
   await assert.rejects(fs.access(path.join(target, '.hybrid', 'manifest.json')));
+});
+
+
+test('installer preserves project-owned ordinary agent files and installs Hybrid-prefixed files', async () => {
+  const target = await fixture();
+  const dir = path.join(target, '.codex', 'agents');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'scout.toml'), 'name = "project-scout"\n');
+  await fs.writeFile(path.join(dir, 'planner.toml'), 'name = "project-planner"\n');
+
+  await installProject(target, { skipCodexValidation: true });
+
+  assert.equal(
+    await fs.readFile(path.join(dir, 'scout.toml'), 'utf8'),
+    'name = "project-scout"\n'
+  );
+  assert.equal(
+    await fs.readFile(path.join(dir, 'planner.toml'), 'utf8'),
+    'name = "project-planner"\n'
+  );
+  assert.match(
+    await fs.readFile(path.join(dir, 'hybrid-scout.toml'), 'utf8'),
+    /^name = "hybrid-scout"$/m
+  );
+  assert.match(
+    await fs.readFile(path.join(dir, 'hybrid-planner.toml'), 'utf8'),
+    /^name = "hybrid-planner"$/m
+  );
+});
+
+test('installer refuses to overwrite a pre-existing reserved Hybrid agent file on first install', async () => {
+  const target = await fixture();
+  const dir = path.join(target, '.codex', 'agents');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'hybrid-scout.toml'), 'name = "project-owned"\n');
+
+  await assert.rejects(
+    () => installProject(target, { skipCodexValidation: true }),
+    /refusing to overwrite pre-existing project agent file/
+  );
+});
+
+test('installer leaves max_depth absent when the target did not choose one', async () => {
+  const target = await fixture();
+  await installProject(target, { skipCodexValidation: true });
+  const config = await fs.readFile(path.join(target, '.codex', 'config.toml'), 'utf8');
+  assert.doesNotMatch(config, /^max_depth\s*=/m);
 });

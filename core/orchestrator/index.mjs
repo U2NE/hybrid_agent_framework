@@ -101,7 +101,7 @@ export function deriveRoutingContext(input, classification, requirements, securi
     architecturalChange:
       input.architecturalChange === true ||
       task.architecturalDecision === true ||
-      /\barchitecture\b|\barchitectural\b|\bmigration\b|\brefactor\b|아키텍처|마이그레이션|리팩터/i.test(request),
+      /\barchitecture\b|\barchitectural\b|\bmigration\b|\bframework\b|\bcross[- ]module\s+refactor\b|아키텍처|마이그레이션|프레임워크|대규모\s*리팩터/i.test(request),
     largeRefactor:
       input.largeRefactor === true ||
       /\b(?:large|major|large-scale|cross-module)\s+refactor\b|대규모\s*리팩터/i.test(request),
@@ -116,6 +116,27 @@ export function deriveRoutingContext(input, classification, requirements, securi
     crossModuleDebugging: input.crossModuleDebugging === true,
     difficultReview: input.difficultReview === true,
     importantArchitecturalDecision: input.importantArchitecturalDecision === true,
+    moderateImplementation:
+      input.moderateImplementation === true || input.taskDifficulty === 'moderate',
+    hardImplementation:
+      input.hardImplementation === true || input.taskDifficulty === 'hard',
+    veryHardImplementation:
+      input.veryHardImplementation === true || input.taskDifficulty === 'very-hard',
+    hardVerification: input.hardVerification === true,
+    hardResearch: input.hardResearch === true,
+    complexSecurityReasoning: input.complexSecurityReasoning === true,
+    exploitReasoning: input.exploitReasoning === true,
+    complexTrustBoundary: input.complexTrustBoundary === true,
+    criticalSecurityJudgment: input.criticalSecurityJudgment === true,
+    unresolvedSecurityRisk: input.unresolvedSecurityRisk === true,
+    unresolvedArchitecture: input.unresolvedArchitecture === true,
+    criticalPlanRisk: input.criticalPlanRisk === true,
+    exceptionallyDifficult: input.exceptionallyDifficult === true,
+    lunaExhausted: input.lunaExhausted === true,
+    lunaMaxFailed: input.lunaMaxFailed === true,
+    repeatedSameFailure: input.repeatedSameFailure === true,
+    criticalUnresolved: input.criticalUnresolved === true,
+    extremeUnresolved: input.extremeUnresolved === true,
   };
 }
 

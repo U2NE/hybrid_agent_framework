@@ -6,8 +6,8 @@ updated: 2026-09-25
 ---
 # Key Decisions
 
-- Flat dispatch is architectural: only the lead dispatches sibling workers; workers do not recursively delegate. `max_depth = 1` is only a Codex 0.156.1 compatibility guard.
-- Model routing uses logical tiers: Luna is the default and Sol is conditional high-judgment escalation. Concrete IDs live only in the routing policy.
+- Flat dispatch is architectural: only the lead dispatches sibling workers and workers do not recursively delegate. The installer preserves a target-owned `max_depth` instead of using that key as the flatness mechanism.
+- Model routing is Luna-first by effort: medium/high/xhigh/max are exhausted as appropriate before Sol escalation. Concrete IDs and effort values live only in the routing policy.
 - Routing is recomputed per stage, so a Sol planning/review stage can downshift to Luna for later routine work.
 - Explicit model rejection falls back by retrying without model/reasoning overrides so Codex can inherit the session/default model.
 - `.planning/` is canonical; this wiki is derived.

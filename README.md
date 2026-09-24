@@ -16,7 +16,7 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 - Security review is conditional.
 - Verify/fix stops after 3 failed iterations.
 - State uses `hybrid-state/v1` and unsupported/corrupt state fails closed.
-- Model routing is logical-tier based: Luna by default, Sol only for high-judgment/risk stages, then per-stage downshift back to Luna where appropriate.
+- Model routing is stage-local and Luna-first: medium/high/xhigh/max are used before Sol escalation, and later routine stages downshift independently.
 
 ## Model routing
 

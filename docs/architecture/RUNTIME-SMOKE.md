@@ -24,7 +24,7 @@ Case A uses two independent files. Expected runtime evidence is two sibling impl
 
 Case B creates two distinct tasks that both modify `src/shared.js`. Expected runtime evidence is two scheduler waves and no concurrent same-file writers.
 
-Case C changes auth/authorization logic. Expected runtime evidence is tester, code reviewer, security reviewer, and verifier activation; the security reviewer is routed to Sol while routine worker/QA stages use Luna unless another escalation condition exists.
+Case C changes auth/authorization logic. Expected preflight routing for this bounded security review is Luna max for the security reviewer while routine worker/QA stages remain on lower Luna effort unless another escalation condition exists.
 
 Case D is the clarification smoke. Its deterministic fixture starts from a deliberately vague login request and must show Round 0 topology confirmation, multiple one-question rounds, weakest-target recomputation, ambiguity reduction to <= 0.20, specReady/pass, and pending approval. The preflight asserts the report contents rather than trusting process exit status.
 

@@ -20,13 +20,13 @@ test('bounded work keeps the routine path on Luna and produces dependency waves'
   assert.ok(result.pipeline.includes('planner'));
   assert.ok(result.pipeline.includes('verifier'));
   assert.equal(result.pipeline.includes('architect'), false);
-  assert.equal(route(result, 'planner').model, 'gpt-6-luna');
-  assert.equal(route(result, 'implementer').model, 'gpt-6-luna');
-  assert.equal(route(result, 'verifier').model, 'gpt-6-luna');
+  assert.equal(route(result, 'planner').routeLevel, 'luna_medium');
+  assert.equal(route(result, 'implementer').routeLevel, 'luna_medium');
+  assert.equal(route(result, 'verifier').routeLevel, 'luna_medium');
   assert.deepEqual(result.waves.map((wave) => wave.map((task) => task.id)), [['parser'], ['tests']]);
 });
 
-test('complex architectural work escalates planning council to Sol while worker stages can downshift to Luna', () => {
+test('complex architecture uses high Luna effort before Sol while routine implementation downshifts', () => {
   const result = prepareExecution({
     task: {
       request: 'Refactor architecture across parser and cache modules',
@@ -44,39 +44,84 @@ test('complex architectural work escalates planning council to Sol while worker 
 
   assert.ok(result.pipeline.includes('architect'));
   assert.ok(result.pipeline.includes('plan-auditor'));
-  assert.equal(route(result, 'planner').model, 'gpt-6-sol');
-  assert.equal(route(result, 'architect').model, 'gpt-6-sol');
-  assert.equal(route(result, 'plan-auditor').model, 'gpt-6-sol');
-  assert.equal(route(result, 'implementer').model, 'gpt-6-luna');
+  assert.equal(route(result, 'planner').routeLevel, 'luna_xhigh');
+  assert.equal(route(result, 'architect').routeLevel, 'luna_max');
+  assert.equal(route(result, 'plan-auditor').routeLevel, 'luna_xhigh');
+  assert.equal(route(result, 'implementer').routeLevel, 'luna_medium');
   assert.deepEqual(result.waves.map((wave) => wave.map((task) => task.id)), [['cache', 'parser']]);
 });
 
-test('security-sensitive plan adds a Sol security reviewer and preserves independent QA lanes', () => {
+test('exceptionally difficult unresolved architecture can enter Sol while following routine stage downshifts', () => {
+  const result = prepareExecution({
+    task: {
+      request: 'Architecture migration across session and token middleware',
+      files: ['src/session.js', 'src/token.js'],
+      components: ['session', 'token'],
+      complex: true,
+    },
+    request: 'Architecture migration across session and token middleware',
+    architecturalChange: true,
+    unresolvedArchitecture: true,
+    tasks: [{ id: 'change', depends_on: [], files_modified: ['src/session.js'] }],
+  });
+
+  assert.equal(route(result, 'architect').routeLevel, 'sol_high');
+  assert.equal(route(result, 'implementer').routeLevel, 'luna_medium');
+});
+
+test('bounded security-sensitive review uses Luna max and preserves independent QA lanes', () => {
   const result = prepareExecution({
     task: { request: 'Change auth permission checks', files: ['src/auth.js'] },
     request: 'Change auth permission checks',
     tasks: [{ id: 'auth', depends_on: [], files_modified: ['src/auth.js'] }],
   });
   assert.equal(result.securityReview, true);
-  for (const stage of ['tester', 'code-reviewer', 'security-reviewer', 'verifier']) assert.ok(result.pipeline.includes(stage));
-  assert.equal(route(result, 'security-reviewer').model, 'gpt-6-sol');
+  for (const stage of ['tester', 'code-reviewer', 'security-reviewer', 'verifier']) {
+    assert.ok(result.pipeline.includes(stage));
+  }
+  assert.equal(route(result, 'security-reviewer').routeLevel, 'luna_max');
 });
 
-test('repeated verification failure escalates difficult review and verification without making escalation sticky', () => {
+test('complex exploit reasoning can escalate security reviewer to Sol', () => {
   const result = prepareExecution({
+    task: { request: 'Review authorization trust boundary exploit path', files: ['src/auth.js'] },
+    request: 'Review authorization trust boundary exploit path',
+    complexSecurityReasoning: true,
+    exploitReasoning: true,
+    tasks: [{ id: 'auth', depends_on: [], files_modified: ['src/auth.js'] }],
+  });
+  assert.equal(result.securityReview, true);
+  assert.equal(route(result, 'security-reviewer').routeLevel, 'sol_high');
+});
+
+test('verification failures increase Luna effort before Sol and do not make escalation sticky', () => {
+  const once = prepareExecution({
+    task: { request: 'Fix parser failure', files: ['src/parser.js'] },
+    request: 'Fix parser failure',
+    verificationFailures: 1,
+    tasks: [{ id: 'fix', depends_on: [], files_modified: ['src/parser.js'] }],
+  });
+  assert.equal(route(once, 'verifier').routeLevel, 'luna_high');
+
+  const twice = prepareExecution({
     task: { request: 'Fix parser failure', files: ['src/parser.js'] },
     request: 'Fix parser failure',
     verificationFailures: 2,
     difficultReview: true,
     tasks: [{ id: 'fix', depends_on: [], files_modified: ['src/parser.js'] }],
   });
+  assert.equal(route(twice, 'code-reviewer').routeLevel, 'luna_max');
+  assert.equal(route(twice, 'verifier').routeLevel, 'luna_max');
 
-  assert.equal(route(result, 'code-reviewer').model, 'gpt-6-sol');
-  assert.equal(route(result, 'verifier').model, 'gpt-6-sol');
-  assert.equal(route(result, 'knowledge-synthesizer').model, 'gpt-6-luna');
+  const routine = prepareExecution({
+    task: { request: 'Update parser message', files: ['src/parser.js'] },
+    request: 'Update parser message',
+    tasks: [{ id: 'edit', depends_on: [], files_modified: ['src/parser.js'] }],
+  });
+  assert.equal(route(routine, 'implementer').routeLevel, 'luna_medium');
 });
 
-test('high-ambiguity requirements reasoning escalates the requirements gate to Sol', () => {
+test('high-ambiguity requirements reasoning uses Luna max before Sol', () => {
   const result = prepareExecution({
     task: { request: 'make it better', ambiguous: true },
     request: 'make it better',
@@ -92,6 +137,6 @@ test('high-ambiguity requirements reasoning escalates the requirements gate to S
   const gate = route(result, 'requirements-gate');
   assert.ok(gate);
   assert.equal(gate.agentRole, 'researcher');
-  assert.equal(gate.model, 'gpt-6-sol');
+  assert.equal(gate.routeLevel, 'luna_max');
   assert.ok(gate.escalationReasons.includes('high-ambiguity'));
 });
