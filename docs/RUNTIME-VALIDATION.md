@@ -115,9 +115,15 @@ The deterministic tests additionally prove that exit-zero/fake-success reports a
 
 This validates convergence semantics, not permission to execute the resulting plan.
 
+### Generic quality-closure integration
+
+Deterministic integration PASS.
+
+`runQualityClosure()` is exported from `core/orchestrator/index.mjs`, installed into target repositories under `.hybrid/core/orchestrator/`, and is the reusable post-integration primitive referenced by the Hybrid skill/installed AGENTS contract. It composes the existing QA callbacks, `runRepairConvergence()`, evidence completion gate, proof adapters, conditional shared-context cache, and passive observability without introducing a new agent role or canonical state. Normal no-defect/no-gap tests record zero repair calls, zero proof-acquisition calls, zero extra verifier calls, and zero browser calls.
+
 ### Case G — review → repair → review convergence
 
-Authenticated semantic PASS.
+Authenticated semantic PASS through the generic `runQualityClosure()` production primitive.
 
 - the disposable R1 fixture contained an objectively reproducible null-input defect; the focused Node test exited nonzero with a `TypeError`;
 - independent authenticated Tester and Code Reviewer workers overlapped, ran the focused test, and both reported the same blocking `AC-001` defect with concrete evidence;
@@ -132,13 +138,15 @@ The semantic validator rejects exit-zero-only reports and requires the original 
 
 ### Case H — proof-gap QE without a QE agent
 
-Authenticated semantic PASS.
+Authenticated semantic PASS through the generic `runQualityClosure()` production primitive.
 
 - the initial completion gate refused to verify `AC-001` because required CLI runtime proof was absent;
 - the first authenticated Luna-medium Verifier evaluated only supplied evidence, executed no command, and returned `FAIL / PROOF_GAP`;
 - Hybrid used the deterministic process adapter—not an agent and not a browser—to execute the real CLI;
-- fresh structured evidence recorded exit 0 and stdout exactly `hello Alice`;
-- the completion gate then passed and the second authenticated Verifier consumed that evidence and returned PASS;
+- fresh raw structured evidence recorded exit 0 and stdout exactly `hello Alice`, but remained `assessed=false, verified=false`;
+- the second authenticated Verifier explicitly consumed the exact acquired `evidenceId` and semantically assessed the output;
+- only after that assessment did the same evidence become verified and the post-proof completion gate PASS;
+- negative deterministic regressions prove exit 0 + `hello Bob`, missing second verifier, or a verifier that does not consume the acquired evidence ID cannot PASS;
 - `qeAgentsSpawned=0` and `browserUsed=false`.
 
 This proves conditional proof acquisition. It does not imply that browser proof can be replaced by CLI proof when browser interaction is intrinsic to the acceptance criterion; an unavailable required browser provider remains a proof gap.

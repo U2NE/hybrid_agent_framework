@@ -16,6 +16,17 @@ export function normalizeFinding(finding = {}) {
   const expectedBehavior = String(finding.expectedBehavior || finding.expected || '').trim();
   const verification = String(finding.requiredVerification || finding.verify || '').trim();
 
+  let correctnessImpact;
+  if (finding.correctnessImpact === true) correctnessImpact = true;
+  else if (finding.correctnessImpact === false) correctnessImpact = false;
+  else if (finding.acceptanceFailure === true) correctnessImpact = true;
+  else {
+    correctnessImpact =
+      /\b(?:correctness|incorrect|wrong|fail(?:ed|ure)?|throw|crash|regression|security)\b/i.test(
+        [category, evidence].join(' ')
+      );
+  }
+
   return {
     severity,
     category,
@@ -26,13 +37,8 @@ export function normalizeFinding(finding = {}) {
     evidence,
     expectedBehavior,
     requiredVerification: verification,
-    acceptanceFailure: finding.acceptanceFailure === true || Boolean(criterionId),
-    correctnessImpact:
-      finding.correctnessImpact === true ||
-      finding.acceptanceFailure === true ||
-      /correct|wrong|fail|throw|crash|regression|acceptance|security/i.test(
-        [category, evidence].join(' ')
-      ),
+    acceptanceFailure: finding.acceptanceFailure === true,
+    correctnessImpact,
   };
 }
 

@@ -50,7 +50,7 @@ Complex work is goal-backward:
 
 Every criterion receives a stable `AC-NNN` trace row. A criterion with no plan coverage is `MISSING`. Implementation or verification evidence that is incomplete is `PARTIAL`. Final PASS requires every criterion to be `VERIFIED`.
 
-Completion depth is tier/risk aware rather than uniformly expensive: Tier 0 uses fresh minimal evidence, Tier 1 targeted evidence, and Tier 2/3 full independent evidence. Runtime interaction is required only when the criterion semantics cannot be established by the existing cheaper evidence. An implementer completion claim is never sufficient evidence by itself.
+Completion depth is tier/risk aware rather than uniformly expensive: Tier 0 uses fresh minimal evidence, Tier 1 targeted evidence, and Tier 2/3 full independent evidence. Runtime interaction is required only when the criterion semantics cannot be established by the existing cheaper evidence. An implementer completion claim is never sufficient evidence by itself. Tier 2/3 full-tier authority requires a fresh final-Verifier coverage record whose `coveredCriteria` contains every required AC and whose `snapshot` matches the current integrated snapshot, or independent criterion-level verified evidence for every AC.
 
 ## Verification
 
@@ -66,7 +66,7 @@ A failing criterion is classified before escalation:
 
 `FIX_REQUIRED` returns a small finding/evidence/file/symbol/expected-behavior/verification packet to the implementation owner. Reviewers remain read-only. Repair is capped at three cycles and repeated finding fingerprints reuse the existing failure-driven Luna→Sol routing.
 
-`PROOF_GAP` does not spawn a QE agent. Hybrid selects the cheapest semantically adequate deterministic proof: existing/focused command or test, CLI/process, HTTP, then a configured browser provider only when required. If required proof cannot be acquired, the criterion remains unverified. After proof acquisition the Verifier reassesses the affected evidence; ordinary tasks with no gap get no extra verifier call.
+`PROOF_GAP` does not spawn a QE agent. Generic `runQualityClosure()` selects the cheapest semantically adequate deterministic proof: existing/focused command or test, CLI/process, HTTP, then a configured browser provider only when required. Acquisition creates raw evidence with a stable `evidenceId`, `acquired=true`, `assessed=false`, and `verified=false`; `success=true` or exit code 0 means only that acquisition succeeded. The Verifier must semantically reassess and explicitly consume the exact evidence ID before it can become `assessed=true, verified=true`, and only then does the completion gate run again. If required proof cannot be acquired or is semantically wrong, the criterion remains unverified. Ordinary tasks with no gap get no extra verifier call.
 
 ## Security activation and review
 

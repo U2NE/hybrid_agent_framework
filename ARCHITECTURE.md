@@ -21,7 +21,7 @@
 - `planning` / `artifacts`: durable SPEC/PLAN representation.
 - `scheduler`: dependency waves + same-file serialization + cycle rejection.
 - `context`: narrow worker context packets; optional deterministic shared snapshot/cache for immutable repo/SPEC/PLAN facts.
-- `orchestrator`: pipeline selection, security lane activation, and model-route assembly. The default Tier 0/1 pipelines do not contain cache/QE/repair/observability stages.
+- `orchestrator`: pipeline selection, security lane activation, model-route assembly, and the small generic `runQualityClosure()` primitive used after an integrated snapshot exists. The default Tier 0/1 pipelines do not contain cache/QE/repair/observability stages.
 - `routing`: logical Luna/Sol policy, contextual escalation, downshift, and safe session-inheritance fallback.
 - `runtime`: derived runtime-root resolution for cache/evidence/log artifacts; never canonical project state.
 - `state`: atomic, versioned, recoverable `STATE.md`.
@@ -94,11 +94,11 @@ Quality depth is also tier/risk dependent.
 
 For full quality work the shape is `Implementer → [Tester / Code Reviewer / Security Reviewer] → Verifier`, with independent read-only QA roles allowed to run concurrently against the integrated snapshot when their inputs are ready.
 
-Completion is evidence-gated on the existing acceptance trace. Tier 0 requires only fresh minimal evidence; Tier 1 uses targeted evidence; Tier 2/3 require full independent evidence. An implementer self-claim is never completion proof.
+Completion is evidence-gated on the existing acceptance trace through `runQualityClosure()`. Tier 0 requires only fresh minimal evidence; Tier 1 uses targeted evidence; Tier 2/3 require full independent evidence. An implementer self-claim is never completion proof. For Tier 2/3, final-verifier authority is accepted only when structured coverage contains every required AC, is fresh, and is bound to the current integrated snapshot; criterion-level independent evidence is the alternative.
 
-Verifier distinguishes a real defect from missing proof. A blocking defect enters at most three targeted implementation-owner repair cycles; repeated failures reuse the existing Luna→Sol escalation and QA/verification runs again on the repaired snapshot. A `PROOF_GAP` instead selects the cheapest semantically adequate deterministic proof. Browser interaction is used only when the acceptance criterion truly requires it and a provider exists; unavailable required proof remains unverified.
+Verifier distinguishes a real defect from missing proof. A blocking defect enters at most three targeted implementation-owner repair cycles; repeated failures reuse the existing Luna→Sol escalation and QA/verification runs again on the repaired snapshot. A `PROOF_GAP` instead selects the cheapest semantically adequate deterministic proof. Acquired evidence remains `acquired=true, assessed=false, verified=false` until a Verifier semantically reassesses the exact `evidenceId`; exit code 0 alone cannot satisfy an AC. Browser interaction is used only when the acceptance criterion truly requires it and a provider exists; unavailable required proof remains unverified.
 
-Shared context snapshots/cache are deterministic and add no LLM call. Cache corruption/unavailability is a miss, not a correctness failure. Passive observability adds no agent and is best-effort under the derived runtime root.
+`runQualityClosure()` routes sibling shared immutable context through `buildWorkerContextWithCache()` only when reuse is worthwhile; cache miss/corruption/write failure falls back to ordinary context construction. The same generic closure emits passive best-effort QA/verifier/repair/proof/completion/cache events under the derived runtime root. Cache and observability add no agent/LLM call and are never correctness dependencies.
 
 Bounded security review uses Luna max; complex exploit/trust-boundary or critical unresolved judgment may enter Sol. The final routine Verifier can independently downshift back to Luna medium.
 
@@ -115,4 +115,4 @@ Restart reads `AGENTS.md`, `PROJECT.md`, `STATE.md`, the active SPEC/PLAN, and a
 
 ## Runtime boundary
 
-Deterministic orchestration and Codex config surfaces are verified. Authenticated A/B/C verify spawn, sibling parallelism, same-file serialization, and quality-lane handoff; E verifies the disposable worktree lifecycle; F verifies bounded planning convergence; G verifies actual review → implementation-owner repair → re-review/verifier convergence; H verifies proof-gap detection → real CLI proof acquisition → verifier reassessment. Explicit model/effort request acceptance is observed, but serving-model identity is not independently attested. Only real user-interactive Case D remains intentionally pending. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.
+Deterministic orchestration and Codex config surfaces are verified. Authenticated A/B/C verify spawn, sibling parallelism, same-file serialization, and quality-lane handoff; E verifies the disposable worktree lifecycle; F verifies bounded planning convergence; G and H now consume the same installed generic `runQualityClosure()` production primitive used by arbitrary Hybrid work. G verifies actual review → implementation-owner repair → re-review/verifier convergence; H verifies proof-gap detection → raw CLI proof acquisition → exact-evidence verifier reassessment → completion. Explicit model/effort request acceptance is observed, but serving-model identity is not independently attested. Only real user-interactive Case D remains intentionally pending. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.

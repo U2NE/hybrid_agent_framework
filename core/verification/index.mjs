@@ -244,8 +244,14 @@ export function normalizeEvidence(value, defaults = {}) {
       source: text,
       fresh: defaults.fresh !== false,
       success: defaults.success !== false,
+      acquired: defaults.acquired === true,
+      assessed: defaults.assessed === true,
+      verified: defaults.verified === true,
       independent: defaults.independent === true,
       criterionId: defaults.criterionId || null,
+      evidenceId: defaults.evidenceId || null,
+      verifier: defaults.verifier || null,
+      snapshot: defaults.snapshot || null,
       artifactRef: defaults.artifactRef || null,
     };
   }
@@ -259,14 +265,22 @@ export function normalizeEvidence(value, defaults = {}) {
     value.success === true ||
     value.passed === true ||
     (Number.isInteger(exitCode) && exitCode === 0);
+  const verified = value.verified === true || defaults.verified === true;
+  const assessed = verified || value.assessed === true || defaults.assessed === true;
 
   return {
     kind,
     source: String(value.source || value.evidence || defaults.source || '').trim(),
     fresh: value.fresh !== false && defaults.fresh !== false,
     success,
+    acquired: value.acquired === true || defaults.acquired === true,
+    assessed,
+    verified,
     independent: value.independent === true || defaults.independent === true,
     criterionId: value.criterionId || defaults.criterionId || null,
+    evidenceId: value.evidenceId || value.id || defaults.evidenceId || null,
+    verifier: value.verifier || defaults.verifier || null,
+    snapshot: value.snapshot || defaults.snapshot || null,
     exitCode: Number.isInteger(exitCode) ? exitCode : null,
     artifactRef: value.artifactRef || defaults.artifactRef || null,
     stdout: typeof value.stdout === 'string' ? value.stdout : undefined,
@@ -274,11 +288,47 @@ export function normalizeEvidence(value, defaults = {}) {
   };
 }
 
+export function assessEvidence(evidence = [], assessment = {}, defaults = {}) {
+  const normalized = flattenEvidence(evidence);
+  const evidenceIds = new Set(
+    (assessment.evidenceIds || assessment.consumedEvidenceIds || [])
+      .map(String)
+      .filter(Boolean)
+  );
+  const criterionId = assessment.criterionId || defaults.criterionId || null;
+  const kind = normalizeRequiredKind(assessment.kind || defaults.kind);
+  const verified = assessment.verified === true;
+  const verifier = assessment.verifier || defaults.verifier || null;
+  const snapshot = assessment.snapshot || defaults.snapshot || null;
+
+  return normalized.map((entry) => {
+    const idMatch = evidenceIds.size > 0 && entry.evidenceId && evidenceIds.has(String(entry.evidenceId));
+    const fallbackMatch =
+      evidenceIds.size === 0 &&
+      entry.acquired !== true &&
+      criterionId &&
+      entry.criterionId === criterionId &&
+      (!kind || entry.kind === kind);
+
+    if (!idMatch && !fallbackMatch) return entry;
+
+    return {
+      ...entry,
+      assessed: true,
+      verified,
+      verifier,
+      independent: assessment.independent === true || entry.independent === true,
+      snapshot: snapshot || entry.snapshot || null,
+    };
+  });
+}
+
 export function findProofGaps(input = {}) {
   const policy = input.policy || resolveEvidencePolicy(input);
   const trace = Array.isArray(input.trace) ? input.trace : [];
   const evidence = flattenEvidence(input.evidence || []);
   const requiredProofByCriterion = input.requiredProofByCriterion || {};
+  const expectedSnapshot = input.snapshot || null;
   const gaps = [];
 
   for (const item of trace) {
@@ -294,14 +344,17 @@ export function findProofGaps(input = {}) {
       entry.criterionId === item.id &&
       entry.kind === requiredKind &&
       entry.success === true &&
-      (!policy.requireFresh || entry.fresh === true)
+      entry.assessed === true &&
+      entry.verified === true &&
+      (!policy.requireFresh || entry.fresh === true) &&
+      (!expectedSnapshot || !entry.snapshot || entry.snapshot === expectedSnapshot)
     );
 
     if (!matching.length) {
       gaps.push({
         criterionId: item.id,
         requiredKind,
-        reason: 'required ' + requiredKind + ' proof is missing',
+        reason: 'required ' + requiredKind + ' proof is missing or not verifier-assessed',
       });
     }
   }
@@ -310,13 +363,16 @@ export function findProofGaps(input = {}) {
     const found = evidence.some((entry) =>
       entry?.kind === requiredKind &&
       entry.success === true &&
-      (!policy.requireFresh || entry.fresh === true)
+      entry.assessed === true &&
+      entry.verified === true &&
+      (!policy.requireFresh || entry.fresh === true) &&
+      (!expectedSnapshot || !entry.snapshot || entry.snapshot === expectedSnapshot)
     );
     if (!found) {
       gaps.push({
         criterionId: null,
         requiredKind,
-        reason: 'required ' + requiredKind + ' evidence is missing',
+        reason: 'required ' + requiredKind + ' evidence is missing or not verifier-assessed',
       });
     }
   }
@@ -332,6 +388,7 @@ export function evaluateCompletionGate(input = {}) {
     requiredKinds: input.requiredKinds,
   });
   const report = input.report || {};
+  const expectedSnapshot = input.snapshot || report.snapshot || null;
   const runtimeEvidence = flattenEvidence(
     input.evidence ||
     report.runtimeEvidence ||
@@ -354,6 +411,7 @@ export function evaluateCompletionGate(input = {}) {
         ? []
         : [{ criterionId: null, requiredKind: minimal?.kind || 'test', reason: 'fresh lightweight evidence is missing' }],
       verification: null,
+      independentVerification: null,
     };
   }
 
@@ -363,17 +421,21 @@ export function evaluateCompletionGate(input = {}) {
     trace: verification.acceptance.items,
     evidence: runtimeEvidence,
     requiredProofByCriterion: input.requiredProofByCriterion,
+    snapshot: expectedSnapshot,
   });
-  const independentPass =
-    !policy.requireIndependent ||
-    report.independentVerification === true ||
-    runtimeEvidence.some((entry) => entry?.independent === true && entry?.success === true);
+  const independentVerification = evaluateIndependentCoverage({
+    required: policy.requireIndependent,
+    trace: verification.acceptance.items,
+    evidence: runtimeEvidence,
+    metadata: report.independentVerification,
+    snapshot: expectedSnapshot,
+  });
 
-  if (!independentPass) {
+  if (!independentVerification.pass) {
     proofGaps.push({
       criterionId: null,
       requiredKind: 'review',
-      reason: 'independent verification evidence is required for this tier',
+      reason: independentVerification.reason,
     });
   }
 
@@ -390,6 +452,68 @@ export function evaluateCompletionGate(input = {}) {
     evidencePolicy: policy,
     proofGaps: dedupeProofGaps(proofGaps),
     verification,
+    independentVerification,
+  };
+}
+
+function evaluateIndependentCoverage({ required, trace, evidence, metadata, snapshot }) {
+  if (!required) return { pass: true, mode: 'not-required', reason: null };
+
+  const requiredIds = trace.map((item) => item.id).filter(Boolean);
+  if (!requiredIds.length) {
+    return {
+      pass: false,
+      mode: null,
+      reason: 'independent verification cannot cover an empty acceptance trace',
+    };
+  }
+
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const covered = new Set((metadata.coveredCriteria || []).map(String));
+    const coverageComplete = requiredIds.every((id) => covered.has(id));
+    const fresh = metadata.fresh === true;
+    const verifier = String(metadata.verifiedBy || '').trim();
+    const snapshotMatches = !snapshot || metadata.snapshot === snapshot;
+
+    if (coverageComplete && fresh && verifier && snapshotMatches) {
+      return {
+        pass: true,
+        mode: 'final-verifier-coverage',
+        verifiedBy: verifier,
+        coveredCriteria: requiredIds,
+        snapshot: metadata.snapshot || null,
+        reason: null,
+      };
+    }
+  }
+
+  const criterionCoverage = requiredIds.every((id) =>
+    evidence.some((entry) =>
+      entry?.criterionId === id &&
+      entry.independent === true &&
+      entry.assessed === true &&
+      entry.verified === true &&
+      entry.fresh === true &&
+      (!snapshot || entry.snapshot === snapshot)
+    )
+  );
+
+  if (criterionCoverage) {
+    return {
+      pass: true,
+      mode: 'criterion-level',
+      coveredCriteria: requiredIds,
+      snapshot: snapshot || null,
+      reason: null,
+    };
+  }
+
+  return {
+    pass: false,
+    mode: null,
+    reason: snapshot
+      ? 'independent verification must cover every acceptance criterion on snapshot ' + snapshot
+      : 'independent verification must cover every acceptance criterion',
   };
 }
 

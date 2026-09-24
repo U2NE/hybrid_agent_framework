@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { installProject } from './install-project.mjs';
 import { runCodexExec } from './runtime-smoke.mjs';
-import { acquireProof, mergeAcquiredEvidence } from '../core/qe/index.mjs';
+import { runQualityClosure } from '../core/orchestrator/index.mjs';
 import { evaluateCompletionGate } from '../core/verification/index.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -59,60 +59,91 @@ export async function runAuthenticatedProofGapSmoke(options = {}) {
   await installProject(workspace, { skipCodexValidation: true });
   await commitAll(workspace, 'proof gap smoke baseline');
 
-  const firstGate = evaluateCompletionGate({
-    tier: 1,
-    report: baseReport(),
-    requiredProofByCriterion: { 'AC-001': 'cli' },
-    evidence: [],
-  });
+  const initialHead = (
+    await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: workspace })
+  ).stdout.trim();
 
+  const verifierRuns = [];
   let runtimeError = null;
-  let firstVerifier = null;
-  let acquisition = null;
-  let secondGate = null;
-  let secondVerifier = null;
+  let closure = null;
 
   try {
-    firstVerifier = await runEvidenceVerifier({
-      phase: 'before-proof',
-      codexBin,
-      workspace,
-      evidenceRoot,
-      evidence: [],
-      expected: 'PROOF_GAP',
-      timeoutMs: options.verifierTimeoutMs || 180000,
-    });
-
-    acquisition = await acquireProof({
-      criterionId: 'AC-001',
-      requiredKind: 'cli',
-      reason: 'current evidence does not execute the user-visible CLI',
-      command: [process.execPath, 'bin/hybrid-smoke-cli.mjs', '--name', 'Alice'],
-    }, {
-      cwd: workspace,
-      timeoutMs: 10000,
-    });
-
-    const acquiredEvidence = mergeAcquiredEvidence([], [acquisition]);
-    secondGate = evaluateCompletionGate({
+    closure = await runQualityClosure({
+      repoRoot: workspace,
+      runtimeRoot: evidenceRoot,
+      runId: 'case-h',
+      taskId: 'cli-proof',
+      snapshot: initialHead,
       tier: 1,
-      report: baseReport(),
+      task: {
+        id: 'cli',
+        goal: 'Expose the requested CLI behavior.',
+        files_modified: ['bin/hybrid-smoke-cli.mjs'],
+        acceptance_criteria: [CRITERION],
+        owner: 'implementer',
+      },
       requiredProofByCriterion: { 'AC-001': 'cli' },
-      evidence: acquiredEvidence,
-    });
+      proofRequests: {
+        'AC-001': {
+          command: [process.execPath, 'bin/hybrid-smoke-cli.mjs', '--name', 'Alice'],
+        },
+      },
+      proofOptions: {
+        cwd: workspace,
+        timeoutMs: 10000,
+      },
+      qa: async () => ({ ok: true, findings: [] }),
+      verifier: async ({ phase, evidence, snapshot }) => {
+        const expected = phase === 'proof-reassessment' ? 'PASS' : 'PROOF_GAP';
+        const run = await runEvidenceVerifier({
+          phase: phase === 'proof-reassessment' ? 'after-proof' : 'before-proof',
+          codexBin,
+          workspace,
+          evidenceRoot,
+          evidence,
+          expected,
+          timeoutMs: options.verifierTimeoutMs || 180000,
+        });
+        verifierRuns.push(run);
 
-    secondVerifier = await runEvidenceVerifier({
-      phase: 'after-proof',
-      codexBin,
-      workspace,
-      evidenceRoot,
-      evidence: acquiredEvidence,
-      expected: 'PASS',
-      timeoutMs: options.verifierTimeoutMs || 180000,
+        const verdict = run.output.verdict;
+        const verified = verdict === 'PASS' && run.output.reason === 'VERIFIED';
+        return {
+          ok: verified,
+          verdict,
+          reason: run.output.reason,
+          findings: [],
+          report: {
+            ...baseReport(),
+            snapshot,
+          },
+          assessments: phase === 'proof-reassessment'
+            ? [{
+                criterionId: 'AC-001',
+                kind: 'cli',
+                evidenceIds: Array.isArray(run.output.consumedEvidenceIds)
+                  ? run.output.consumedEvidenceIds
+                  : [],
+                verified,
+                verifier: 'verifier',
+                snapshot,
+              }]
+            : [],
+        };
+      },
     });
   } catch (error) {
     runtimeError = String(error?.message || error);
   }
+
+  const firstGate = closure?.gates?.find((item) => item.phase === 'pre-proof')?.gate || null;
+  const secondGate = closure?.gates?.find((item) => item.phase === 'post-proof')?.gate || null;
+  const firstVerifier = verifierRuns[0] || null;
+  const secondVerifier = verifierRuns[1] || null;
+  const acquisition = closure?.acquisitions?.[0] || null;
+  const assessedEvidence = acquisition?.evidence?.evidenceId
+    ? closure?.evidence?.find((item) => item.evidenceId === acquisition.evidence.evidenceId) || null
+    : null;
 
   const directCli = await runCli(workspace);
   const finalStatus = lines(
@@ -125,11 +156,23 @@ export async function runAuthenticatedProofGapSmoke(options = {}) {
     preflight,
     workspace,
     evidenceRoot,
-    firstGate: summarizeGate(firstGate),
+    productionPrimitive: 'runQualityClosure',
+    firstGate: firstGate ? summarizeGate(firstGate) : null,
     firstVerifier,
     acquisition,
     secondGate: secondGate ? summarizeGate(secondGate) : null,
     secondVerifier,
+    assessedEvidence,
+    qualityClosure: closure
+      ? {
+          pass: closure.pass,
+          verdict: closure.verdict,
+          reason: closure.reason,
+          completion: closure.completion,
+          gates: closure.gates,
+          events: closure.events,
+        }
+      : null,
     directCli,
     qeAgentsSpawned: 0,
     browserUsed: false,
@@ -153,6 +196,13 @@ export async function runAuthenticatedProofGapSmoke(options = {}) {
 
 export function validateProofGapSmokeReport(report = {}) {
   const errors = [];
+
+  if (report.productionPrimitive !== 'runQualityClosure') {
+    errors.push('Case H did not consume the generic runQualityClosure production primitive');
+  }
+  if (report.qualityClosure?.pass !== true || report.qualityClosure?.completion?.pass !== true) {
+    errors.push('generic quality closure did not reach completion PASS');
+  }
 
   if (report.firstGate?.pass !== false || report.firstGate?.reason !== 'PROOF_GAP') {
     errors.push('first completion gate falsely accepted missing runtime proof');
@@ -186,10 +236,14 @@ export function validateProofGapSmokeReport(report = {}) {
     evidence?.kind !== 'cli' ||
     evidence?.fresh !== true ||
     evidence?.success !== true ||
+    evidence?.acquired !== true ||
+    evidence?.assessed !== false ||
+    evidence?.verified !== false ||
+    !evidence?.evidenceId ||
     Number(evidence?.exitCode) !== 0 ||
     evidence?.stdout !== 'hello Alice'
   ) {
-    errors.push('acquired CLI process evidence is incomplete or incorrect');
+    errors.push('acquired CLI process evidence is incomplete, semantically wrong, or prematurely verified');
   }
 
   if (report.secondGate?.pass !== true || report.secondGate?.reason != null) {
@@ -202,12 +256,49 @@ export function validateProofGapSmokeReport(report = {}) {
     if (report.secondVerifier.output?.verdict !== 'PASS') {
       errors.push('second verifier did not PASS after proof acquisition');
     }
+    const consumed = Array.isArray(report.secondVerifier.output?.consumedEvidenceIds)
+      ? report.secondVerifier.output.consumedEvidenceIds
+      : [];
+    if (!evidence?.evidenceId || !consumed.includes(evidence.evidenceId)) {
+      errors.push('second verifier did not consume the exact acquired evidence id');
+    }
     if (report.secondVerifier.delegationObserved === true) {
       errors.push('second verifier recursively delegated');
     }
     if (Number(report.secondVerifier.startedAt) <= Number(report.firstVerifier?.endedAt || 0)) {
       errors.push('second verifier did not run after the first verifier');
     }
+  }
+
+  if (
+    report.assessedEvidence?.evidenceId !== evidence?.evidenceId ||
+    report.assessedEvidence?.assessed !== true ||
+    report.assessedEvidence?.verified !== true ||
+    report.assessedEvidence?.verifier !== 'verifier'
+  ) {
+    errors.push('acquired proof was not semantically assessed and verified before completion');
+  }
+
+  const events = Array.isArray(report.qualityClosure?.events) ? report.qualityClosure.events : [];
+  const firstVerifierEnd = events.findIndex((event) =>
+    event.stage === 'verifier' && event.lifecycle === 'end' && event.phase === 'verification'
+  );
+  const proofEnd = events.findIndex((event) =>
+    event.stage === 'proof-acquisition' && event.lifecycle === 'end'
+  );
+  const secondVerifierStart = events.findIndex((event) =>
+    event.stage === 'verifier' && event.lifecycle === 'start' && event.phase === 'proof-reassessment'
+  );
+  const completionPass = events.findIndex((event) =>
+    event.stage === 'completion' && event.outcome === 'pass'
+  );
+  if (
+    firstVerifierEnd < 0 ||
+    proofEnd <= firstVerifierEnd ||
+    secondVerifierStart <= proofEnd ||
+    completionPass <= secondVerifierStart
+  ) {
+    errors.push('proof lifecycle ordering is not verifier-gap -> acquisition -> reassessment -> completion');
   }
 
   if (report.qeAgentsSpawned !== 0) errors.push('QE spawned an agent');
@@ -240,8 +331,9 @@ async function runEvidenceVerifier({
     expected === 'PROOF_GAP'
       ? 'Because no CLI runtime evidence is supplied, return FAIL with reason PROOF_GAP. Do not claim the criterion VERIFIED.'
       : 'The supplied fresh CLI evidence is the proof to evaluate. Return PASS only if it shows exit 0 and stdout exactly "hello Alice".',
+    'When evidence is supplied, consumedEvidenceIds must contain the exact evidenceId values you semantically assessed. Do not invent IDs and do not claim VERIFIED without consuming the relevant acquired evidence.',
     'Return exactly one JSON object and no markdown.',
-    'Shape: {"role":"verifier","verdict":"PASS|FAIL","reason":"PROOF_GAP|VERIFIED|FAILURE","criterionId":"AC-001","consumedEvidenceKinds":["cli"],"evidenceAssessment":"short factual assessment"}',
+    'Shape: {"role":"verifier","verdict":"PASS|FAIL","reason":"PROOF_GAP|VERIFIED|FAILURE","criterionId":"AC-001","consumedEvidenceIds":[],"consumedEvidenceKinds":["cli"],"evidenceAssessment":"short factual assessment"}',
   ].join('\n');
 
   const startedAt = Date.now();

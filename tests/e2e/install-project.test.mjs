@@ -54,6 +54,13 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(agents, /\$hybrid/);
   assert.match(agents, /Luna effort ladder/);
   assert.match(agents, /session-inheritance fallback/);
+  assert.match(agents, /runQualityClosure\(\)/);
+
+  const qualityClosure = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'orchestrator', 'quality-closure.mjs'),
+    'utf8'
+  );
+  assert.match(qualityClosure, /export async function runQualityClosure/);
 
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);

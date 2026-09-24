@@ -1,3 +1,5 @@
+import { getOrCreateContextSnapshot } from './cache.mjs';
+
 const DEFAULT_CONTEXT_BUDGET_CHARS = 24000;
 const CRITICAL_SECTION_PATTERNS = [
   /^goal$/i,
@@ -38,6 +40,68 @@ export function buildWorkerContext(task, options = {}) {
   if (options.phasePath) context.phasePath = options.phasePath;
 
   return reduceWorkerContext(context, options);
+}
+
+
+export async function buildWorkerContextWithCache(task, options = {}) {
+  const context = buildWorkerContext(task, options);
+  const reuseCount = Number(options.reuseCount || 0);
+  const useCache =
+    options.reuseSharedContext === true &&
+    reuseCount > 1 &&
+    Number(options.tier ?? 1) > 0 &&
+    options.repoRoot;
+
+  if (!useCache) {
+    return {
+      context,
+      sharedSnapshot: null,
+      cacheUsed: false,
+      cacheHit: false,
+      cacheError: null,
+      cachePath: null,
+    };
+  }
+
+  const result = await getOrCreateContextSnapshot({
+    repoRoot: options.repoRoot,
+    gitRevision: options.gitRevision || '',
+    spec: options.spec,
+    specHash: options.specHash,
+    plan: options.plan,
+    planHash: options.planHash,
+    scope: options.scope || 'quality-closure',
+    goal: context.goal,
+    acceptanceCriteria: context.acceptanceCriteria,
+    constraints: context.constraints,
+    relevantInterfaces: context.relevantInterfaces,
+    decisions: context.decisions,
+    relevantFiles: context.relevantFiles,
+  }, {
+    runtimeRoot: options.runtimeRoot,
+    env: options.env,
+    tmpdir: options.tmpdir,
+  });
+
+  if (result.cacheError) {
+    return {
+      context,
+      sharedSnapshot: null,
+      cacheUsed: true,
+      cacheHit: false,
+      cacheError: result.cacheError,
+      cachePath: result.cachePath,
+    };
+  }
+
+  return {
+    context,
+    sharedSnapshot: result.snapshot,
+    cacheUsed: true,
+    cacheHit: result.cacheHit,
+    cacheError: null,
+    cachePath: result.cachePath,
+  };
 }
 
 export function renderWorkerContext(context) {

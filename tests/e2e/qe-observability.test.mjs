@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { evaluateCompletionGate } from '../../core/verification/index.mjs';
+import { assessEvidence, evaluateCompletionGate } from '../../core/verification/index.mjs';
 import {
   acquireProof,
   mergeAcquiredEvidence,
@@ -75,11 +75,27 @@ test('missing runtime CLI evidence creates a CLI proof gap and process acquisiti
   assert.equal(acquisition.evidence.success, true);
   assert.equal(acquisition.evidence.stdout, 'hello Alice');
 
+  const rawEvidence = mergeAcquiredEvidence([], [acquisition]);
+  const rawGate = evaluateCompletionGate({
+    tier: 1,
+    report: report(),
+    requiredProofByCriterion: { 'AC-001': 'cli' },
+    evidence: rawEvidence,
+  });
+  assert.equal(rawGate.pass, false);
+
+  const assessedEvidence = assessEvidence(rawEvidence, {
+    criterionId: 'AC-001',
+    kind: 'cli',
+    evidenceIds: [acquisition.evidence.evidenceId],
+    verified: true,
+    verifier: 'verifier',
+  });
   const second = evaluateCompletionGate({
     tier: 1,
     report: report(),
     requiredProofByCriterion: { 'AC-001': 'cli' },
-    evidence: mergeAcquiredEvidence([], [acquisition]),
+    evidence: assessedEvidence,
   });
   assert.equal(second.pass, true);
 });

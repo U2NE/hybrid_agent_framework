@@ -1,3 +1,4 @@
+export { runQualityClosure } from './quality-closure.mjs';
 import { classifyTask, TaskTier } from '../classifier/index.mjs';
 import { evaluateRequirements } from '../requirements/index.mjs';
 import { buildExecutionWaves, planExecutionIsolation } from '../scheduler/index.mjs';

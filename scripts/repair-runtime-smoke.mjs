@@ -9,9 +9,9 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { installProject } from './install-project.mjs';
 import { runCodexExec } from './runtime-smoke.mjs';
+import { runQualityClosure } from '../core/orchestrator/index.mjs';
 import {
   MAX_REPAIR_CYCLES,
-  runRepairConvergence,
   shouldTriggerRepair,
 } from '../core/repair/index.mjs';
 
@@ -70,12 +70,17 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
   const repairRuns = [];
   const verifierRuns = [];
   let runtimeError = null;
-  let convergence = null;
+  let closure = null;
 
   try {
-    convergence = await runRepairConvergence({
+    closure = await runQualityClosure({
+      repoRoot: workspace,
+      runtimeRoot: evidenceRoot,
+      runId: 'case-g',
+      taskId: 'normalize-user',
       snapshot: initialHead,
-      maxIterations: MAX_REPAIR_CYCLES,
+      tier: 1,
+      maxRepairIterations: MAX_REPAIR_CYCLES,
       task: {
         id: 'normalize-user',
         goal: 'Normalize valid users and return null for null input.',
@@ -84,7 +89,7 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
         verify: 'node --test tests/user.test.mjs',
         owner: 'implementer',
       },
-      reviewSnapshot: async ({ attempt, snapshot }) => {
+      qa: async ({ attempt, snapshot }) => {
         const startedAt = Date.now();
         const runs = await Promise.all([
           runQaRole({
@@ -131,7 +136,7 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
           },
         };
       },
-      verifySnapshot: async ({ attempt, snapshot, qa }) => {
+      verifier: async ({ attempt, snapshot, qa }) => {
         const run = await runVerifier({
           codexBin,
           workspace,
@@ -141,14 +146,18 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
           timeoutMs: options.verifierTimeoutMs || 180000,
         });
         verifierRuns.push(run);
+        const ok =
+          run.exitCode === 0 &&
+          run.timedOut !== true &&
+          run.output.verdict === 'PASS' &&
+          run.testCommandPassed === true &&
+          qa?.ok !== false;
         return {
-          ok:
-            run.exitCode === 0 &&
-            run.timedOut !== true &&
-            run.output.verdict === 'PASS' &&
-            run.testCommandPassed === true &&
-            qa?.ok !== false,
+          ok,
+          verdict: ok ? 'PASS' : 'FAIL',
+          reason: ok ? 'VERIFIED' : 'FIX_REQUIRED',
           findings: run.output.findings || [],
+          report: completionReport(snapshot),
           evidence: {
             testCommandPassed: run.testCommandPassed,
             eventsPath: run.eventsPath,
@@ -225,16 +234,28 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
       test: initialTest,
       defectReproduced: initialTest.exitCode !== 0,
     },
+    productionPrimitive: 'runQualityClosure',
     qaCycles,
     repairRuns,
     verifierRuns,
-    convergence: convergence
+    convergence: closure?.convergence
       ? {
-          ok: convergence.ok,
-          blocked: convergence.blocked === true,
-          attempts: convergence.attempts,
-          repairCount: convergence.repairs?.length || 0,
-          snapshot: convergence.snapshot,
+          ok: closure.convergence.ok,
+          blocked: closure.convergence.blocked === true,
+          attempts: closure.convergence.attempts,
+          repairCount: closure.convergence.repairs?.length || 0,
+          snapshot: closure.convergence.snapshot,
+        }
+      : null,
+    qualityClosure: closure
+      ? {
+          pass: closure.pass,
+          verdict: closure.verdict,
+          reason: closure.reason,
+          snapshot: closure.snapshot,
+          completion: closure.completion,
+          gates: closure.gates,
+          eventStages: closure.events.map((event) => event.stage),
         }
       : null,
     final: {
@@ -262,6 +283,13 @@ export async function runAuthenticatedRepairSmoke(options = {}) {
 
 export function validateRepairSmokeReport(report = {}) {
   const errors = [];
+
+  if (report.productionPrimitive !== 'runQualityClosure') {
+    errors.push('Case G did not consume the generic runQualityClosure production primitive');
+  }
+  if (report.qualityClosure?.pass !== true || report.qualityClosure?.completion?.pass !== true) {
+    errors.push('generic quality closure did not reach completion PASS');
+  }
 
   if (report.initial?.defectReproduced !== true || report.initial?.test?.exitCode === 0) {
     errors.push('initial defect was not objectively reproduced');
@@ -344,6 +372,31 @@ export function validateRepairSmokeReport(report = {}) {
   }
 
   return { ok: errors.length === 0, errors };
+}
+
+function completionReport(snapshot) {
+  return {
+    criteria: [CRITERION],
+    planTasks: [{
+      id: 'normalize-user',
+      acceptance_criteria: [CRITERION],
+    }],
+    implementationEvidence: {
+      'AC-001': { evidence: 'src/user.js normalizeUser implementation' },
+    },
+    verificationEvidence: {
+      'AC-001': {
+        status: 'VERIFIED',
+        evidence: 'fresh independent focused test and behavior inspection',
+      },
+    },
+    freshTestOutput: true,
+    buildApplicable: false,
+    typecheckApplicable: false,
+    lintApplicable: false,
+    specGoalAligned: true,
+    snapshot,
+  };
 }
 
 async function runQaRole({ role, codexBin, workspace, evidenceRoot, attempt, snapshot, timeoutMs }) {

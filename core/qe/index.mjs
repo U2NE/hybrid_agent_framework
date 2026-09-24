@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { normalizeEvidence } from '../verification/index.mjs';
 
@@ -101,7 +102,7 @@ export async function acquireProof(gap = {}, options = {}) {
         available: true,
         gap,
         selection,
-        evidence: normalizeEvidence({
+        evidence: createRawEvidence({
           kind: selection.requiredKind,
           source: selection.command.join(' '),
           fresh: true,
@@ -120,7 +121,7 @@ export async function acquireProof(gap = {}, options = {}) {
         available: true,
         gap,
         selection,
-        evidence: normalizeEvidence({
+        evidence: createRawEvidence({
           kind: selection.requiredKind,
           source: selection.command.join(' '),
           fresh: true,
@@ -151,7 +152,7 @@ export async function acquireProof(gap = {}, options = {}) {
         available: true,
         gap,
         selection,
-        evidence: normalizeEvidence({
+        evidence: createRawEvidence({
           kind: 'http',
           source: String(gap.url),
           fresh: true,
@@ -168,7 +169,7 @@ export async function acquireProof(gap = {}, options = {}) {
         available: true,
         gap,
         selection,
-        evidence: normalizeEvidence({
+        evidence: createRawEvidence({
           kind: 'http',
           source: String(gap.url),
           fresh: true,
@@ -188,7 +189,7 @@ export async function acquireProof(gap = {}, options = {}) {
         gap,
         timeoutMs: boundedTimeout(options.timeoutMs),
       });
-      const evidence = normalizeEvidence({
+      const evidence = createRawEvidence({
         kind: 'browser',
         source: result?.source || 'configured-browser-provider',
         fresh: true,
@@ -210,7 +211,7 @@ export async function acquireProof(gap = {}, options = {}) {
         available: true,
         gap,
         selection,
-        evidence: normalizeEvidence({
+        evidence: createRawEvidence({
           kind: 'browser',
           source: 'configured-browser-provider',
           fresh: true,
@@ -246,6 +247,29 @@ export function mergeAcquiredEvidence(existing = [], acquisitions = []) {
     if (acquisition?.evidence) evidence.push(acquisition.evidence);
   }
   return evidence;
+}
+
+
+function createRawEvidence(value) {
+  const evidenceId = createHash('sha256')
+    .update(JSON.stringify({
+      kind: value.kind || null,
+      source: value.source || null,
+      criterionId: value.criterionId || null,
+      exitCode: value.exitCode ?? null,
+      stdout: value.stdout || '',
+      stderr: value.stderr || '',
+      artifactRef: value.artifactRef || null,
+    }))
+    .digest('hex');
+
+  return normalizeEvidence({
+    ...value,
+    evidenceId,
+    acquired: true,
+    assessed: false,
+    verified: false,
+  });
 }
 
 function proofRank(kind) {

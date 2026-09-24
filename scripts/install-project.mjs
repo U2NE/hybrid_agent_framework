@@ -355,6 +355,7 @@ export function mergeAgentsInstructions(content) {
     '- Route work through the Luna effort ladder first; use Sol only after Luna max is insufficient or the task is exceptionally difficult/critical according to `.hybrid/core/routing/model-routing.json`.',
     '- If an explicit routed model is unavailable/rejected, retry that spawn without model/effort override and record session-inheritance fallback.',
     '- Separate implementation from final testing/review/verification.',
+    '- Close an integrated implementation snapshot through the generic `runQualityClosure()` exported by `.hybrid/core/orchestrator/index.mjs`; it owns defect repair, proof-gap reassessment, optional shared-context cache reuse, passive observability, and final completion gating without adding a new agent role.',
     '- Run security review only for trust-boundary-sensitive changes.',
     '- Stop targeted fix loops after three iterations and preserve failure evidence.',
     '- Hybrid deterministic helpers are available with `node .hybrid/bin/hybrid.mjs help`.',

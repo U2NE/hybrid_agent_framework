@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assessEvidence,
   evaluateCompletionGate,
   findProofGaps,
   normalizeEvidence,
@@ -9,6 +10,7 @@ import {
 import {
   buildRepairPacket,
   findingFingerprint,
+  normalizeFinding,
   runRepairConvergence,
   shouldTriggerRepair,
 } from '../../core/repair/index.mjs';
@@ -98,10 +100,21 @@ test('Tier 2/3 completion requires independent evidence and implementer self-cla
 
   const passed = evaluateCompletionGate({
     tier: 2,
-    report: { ...report, independentVerification: true },
+    snapshot: 'R7',
+    report: {
+      ...report,
+      snapshot: 'R7',
+      independentVerification: {
+        verifiedBy: 'verifier',
+        coveredCriteria: ['AC-001'],
+        snapshot: 'R7',
+        fresh: true,
+      },
+    },
   });
   assert.equal(passed.pass, true);
   assert.equal(passed.evidencePolicy.depth, 'full');
+  assert.equal(passed.independentVerification.mode, 'final-verifier-coverage');
 });
 
 test('required runtime proof remains a proof gap until matching fresh evidence exists', () => {
@@ -116,20 +129,39 @@ test('required runtime proof remains a proof gap until matching fresh evidence e
   assert.equal(first.reason, 'PROOF_GAP');
   assert.deepEqual(first.proofGaps.map((gap) => gap.requiredKind), ['cli']);
 
+  const raw = [{
+    kind: 'cli',
+    source: 'node ./bin/example.mjs',
+    fresh: true,
+    success: true,
+    acquired: true,
+    assessed: false,
+    verified: false,
+    evidenceId: 'proof-1',
+    exitCode: 0,
+    criterionId: 'AC-001',
+  }];
+
+  const rawGate = evaluateCompletionGate({
+    tier: 1,
+    report,
+    requiredProofByCriterion: { 'AC-001': 'cli' },
+    evidence: raw,
+  });
+  assert.equal(rawGate.pass, false);
+
+  const assessed = assessEvidence(raw, {
+    criterionId: 'AC-001',
+    kind: 'cli',
+    evidenceIds: ['proof-1'],
+    verified: true,
+    verifier: 'verifier',
+  });
   const second = evaluateCompletionGate({
     tier: 1,
     report,
     requiredProofByCriterion: { 'AC-001': 'cli' },
-    evidence: [
-      {
-        kind: 'cli',
-        source: 'node ./bin/example.mjs',
-        fresh: true,
-        success: true,
-        exitCode: 0,
-        criterionId: 'AC-001',
-      },
-    ],
+    evidence: assessed,
   });
   assert.equal(second.pass, true);
 });
@@ -144,7 +176,28 @@ test('evidence catalog rejects unbounded custom kinds', () => {
   );
 });
 
-test('blocking or acceptance-impacting findings trigger repair while style nits do not', () => {
+test('criterion binding is distinct from acceptance failure and repair triggers stay material', () => {
+  assert.equal(normalizeFinding({ criterionId: 'AC-003' }).acceptanceFailure, false);
+  assert.equal(shouldTriggerRepair({ severity: 'blocker', category: 'correctness' }), true);
+  assert.equal(
+    shouldTriggerRepair({
+      severity: 'low',
+      category: 'style',
+      criterionId: 'AC-003',
+      acceptanceFailure: false,
+      evidence: 'style could improve acceptance readability',
+    }),
+    false
+  );
+  assert.equal(
+    shouldTriggerRepair({
+      severity: 'low',
+      category: 'style',
+      criterionId: 'AC-003',
+      acceptanceFailure: true,
+    }),
+    true
+  );
   assert.equal(shouldTriggerRepair({ severity: 'high', category: 'correctness' }), true);
   assert.equal(
     shouldTriggerRepair({
