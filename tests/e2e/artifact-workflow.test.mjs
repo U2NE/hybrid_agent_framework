@@ -87,3 +87,35 @@ test('SPEC renderer includes the required durable fields and artifact writer is 
   const target = await writePhaseArtifact(root, '01-auth', 'SPEC.md', spec);
   assert.equal(await fs.readFile(target, 'utf8'), spec);
 });
+
+test('SPEC renderer preserves clarification provenance without replacing Hybrid sections', () => {
+  const spec = renderSpec({
+    goal: 'Build login',
+    topology: [{ id: 'auth', name: 'Auth', status: 'active' }],
+    constraints: ['JWT only'],
+    nonGoals: ['No SSO'],
+    acceptanceCriteria: ['login succeeds'],
+    resolvedAssumptions: ['reuse current middleware'],
+    technicalContext: ['brownfield'],
+    relevantCode: ['src/auth/'],
+    edgeCases: ['expired token'],
+    clarification: {
+      finalAmbiguity: 0.18,
+      threshold: 0.20,
+      thresholdSource: 'default',
+      roundCount: 4,
+      completion: 'spec-ready',
+      pass: true,
+      approvalStatus: 'pending',
+      deferredComponents: [{ component_id: 'recovery' }],
+    },
+  });
+
+  assert.match(spec, /## Clarification provenance/);
+  assert.match(spec, /Final ambiguity: 0.18/);
+  assert.match(spec, /Threshold: 0.2/);
+  assert.match(spec, /Round count: 4/);
+  assert.match(spec, /Deferred components: recovery/);
+  assert.match(spec, /## Goal/);
+  assert.match(spec, /- Approval: pending/);
+});

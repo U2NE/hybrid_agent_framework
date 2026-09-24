@@ -14,7 +14,7 @@ Use this skill when the user asks to implement, change, fix, refactor, or add a 
    - Tier 0 trivial: execute directly, then independent verification.
    - Tier 1 bounded: scout, plan-lite, execute, verify.
    - Tier 2 complex: scout, spec-lite, approval, planning council, execution waves, independent QA/review.
-   - Tier 3 ambiguous: scout, full requirements gate, approved SPEC, then the Tier 2 path.
+   - Tier 3 ambiguous: scout, run the iterative `$clarify` deep-interview loop (Round 0 topology → one weakest-pair question per round → re-score until the ambiguity threshold), crystallize a durable SPEC pending explicit approval, then continue on the Tier 2 path.
 3. Never ask the user for facts available from the repo.
 4. Use .planning as the only canonical state.
 5. Compute dependency waves and serialize same-file writers.

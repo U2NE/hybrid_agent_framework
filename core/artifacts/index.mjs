@@ -38,6 +38,7 @@ export function renderSpec(spec) {
     section('Technical context', bullets(spec.technicalContext)),
     section('Relevant code', bullets(spec.relevantCode)),
     section('Edge cases', bullets(spec.edgeCases)),
+    ...(spec.clarification ? [section('Clarification provenance', renderClarification(spec.clarification))] : []),
   ].join('\n').trimEnd() + '\n';
 }
 
@@ -74,6 +75,22 @@ function section(title, content) {
 function bullets(values) {
   const list = Array.isArray(values) ? values.filter(Boolean) : [];
   return list.length ? list.map((x) => '- ' + String(x)).join('\n') : '(none)';
+}
+
+function renderClarification(value) {
+  const lines = [
+    '- Final ambiguity: ' + value.finalAmbiguity,
+    '- Threshold: ' + value.threshold,
+    '- Threshold source: ' + (value.thresholdSource || 'unknown'),
+    '- Round count: ' + (value.roundCount ?? 0),
+    '- Completion: ' + (value.completion || 'unknown'),
+    '- Pass: ' + String(value.pass === true),
+    '- Approval: ' + (value.approvalStatus || 'pending'),
+  ];
+  if (Array.isArray(value.deferredComponents) && value.deferredComponents.length) {
+    lines.push('- Deferred components: ' + value.deferredComponents.map((x) => x.component_id || x.id).join(', '));
+  }
+  return lines.join('\n');
 }
 
 function renderTopology(topology) {

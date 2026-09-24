@@ -8,6 +8,13 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { prepareExecution } from '../core/orchestrator/index.mjs';
+import {
+  confirmInterviewTopology,
+  createInterviewState,
+  crystallizeInterviewSpec,
+  nextInterviewQuestion,
+  recordInterviewRound,
+} from '../core/requirements/index.mjs';
 import { installProject } from './install-project.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -56,6 +63,10 @@ export const SMOKE_CASES = Object.freeze({
       'Record planned/observed waves, worker roles, routed model tiers/models, and any model fallback in .planning/runtime-smoke-report.json.',
     ].join('\n'),
   },
+  D: {
+    title: 'OMC-style iterative clarification',
+    interactive: true,
+  },
   C: {
     title: 'security-sensitive quality lanes',
     input: {
@@ -81,6 +92,21 @@ export function preflightSmokeCase(name) {
   const key = String(name || '').toUpperCase();
   const spec = SMOKE_CASES[key];
   if (!spec) throw new Error('unknown smoke case: ' + name);
+
+  if (key === 'D') {
+    const report = runClarificationFixture();
+    assert.equal(report.round0.kind, 'topology');
+    assert.ok(report.roundCount >= 2);
+    assert.equal(report.rounds.length, report.roundCount);
+    assert.ok(report.rounds.every((round) => round.component && round.dimension && round.question));
+    assert.ok(report.rounds.every((round) => round.ambiguityBefore !== round.ambiguityAfter));
+    assert.ok(new Set(report.rounds.map((round) => round.component + ':' + round.dimension)).size >= 2);
+    assert.ok(report.final.ambiguity <= report.threshold);
+    assert.equal(report.final.pass, true);
+    assert.equal(report.final.specReady, true);
+    return report;
+  }
+
   const result = prepareExecution(spec.input);
   const waves = result.waves.map((wave) => wave.map((task) => task.id));
   assert.deepEqual(waves, spec.expectedWaves);
@@ -106,11 +132,160 @@ export function preflightSmokeCase(name) {
   };
 }
 
+export function runClarificationFixture() {
+  let state = createInterviewState({
+    initialIdea: '알아서 로그인 기능 좋게 만들어줘',
+    type: 'greenfield',
+  });
+
+  const round0 = nextInterviewQuestion(state, {}, {
+    topologyCandidates: [
+      { id: 'auth-flow', name: 'Auth Flow', description: 'Login and authentication behavior' },
+      { id: 'session-policy', name: 'Session Policy', description: 'Session lifetime and post-login behavior' },
+    ],
+  });
+
+  state = confirmInterviewTopology(state, {
+    components: round0.candidates,
+    confirmedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  const rounds = [];
+
+  let spec = {
+    type: 'greenfield',
+    goal: 'Create a usable login feature',
+    acceptanceCriteria: ['The confirmed login flow can be verified end to end'],
+    topology: [
+      { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.35, constraints: 0.45, criteria: 0.40 } },
+      { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.55, constraints: 0.60, criteria: 0.45 } },
+    ],
+  };
+
+  let question = nextInterviewQuestion(state, spec);
+  let recorded = recordInterviewRound(state, {
+    question,
+    answer: 'Email/password login is the primary goal; social login is out of scope.',
+    spec: {
+      ...spec,
+      topology: [
+        { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.80, constraints: 0.45, criteria: 0.50 } },
+        { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.55, constraints: 0.60, criteria: 0.45 } },
+      ],
+    },
+  });
+  state = recorded.state;
+  spec = {
+    ...spec,
+    topology: [
+      { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.80, constraints: 0.45, criteria: 0.50 } },
+      { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.55, constraints: 0.60, criteria: 0.45 } },
+    ],
+  };
+  rounds.push(reportRound(recorded));
+
+  question = nextInterviewQuestion(state, spec);
+  recorded = recordInterviewRound(state, {
+    question,
+    answer: 'A valid session must survive refresh, expire after 24 hours, and redirect expired users to login.',
+    spec: {
+      ...spec,
+      topology: [
+        { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.80, constraints: 0.65, criteria: 0.60 } },
+        { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.75, constraints: 0.70, criteria: 0.80 } },
+      ],
+    },
+  });
+  state = recorded.state;
+  spec = {
+    ...spec,
+    topology: [
+      { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.80, constraints: 0.65, criteria: 0.60 } },
+      { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.75, constraints: 0.70, criteria: 0.80 } },
+    ],
+  };
+  rounds.push(reportRound(recorded));
+
+  question = nextInterviewQuestion(state, spec);
+  recorded = recordInterviewRound(state, {
+    question,
+    answer: 'Success means correct credentials enter the app, wrong credentials remain out, and lockout/error states are testable.',
+    spec: {
+      ...spec,
+      constraints: ['Email/password only', 'No social login'],
+      nonGoals: ['SSO', 'Social login'],
+      topology: [
+        { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.90, constraints: 0.75, criteria: 0.85 } },
+        { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.85, constraints: 0.75, criteria: 0.85 } },
+      ],
+    },
+  });
+  state = recorded.state;
+  spec = {
+    ...spec,
+    constraints: ['Email/password only', 'No social login'],
+    nonGoals: ['SSO', 'Social login'],
+    topology: [
+      { id: 'auth-flow', name: 'Auth Flow', status: 'active', clarity: { goal: 0.90, constraints: 0.75, criteria: 0.85 } },
+      { id: 'session-policy', name: 'Session Policy', status: 'active', clarity: { goal: 0.85, constraints: 0.75, criteria: 0.85 } },
+    ],
+  };
+  rounds.push(reportRound(recorded));
+
+  const progress = recorded.progress;
+  const crystallized = crystallizeInterviewSpec(state, spec, progress);
+
+  return {
+    case: 'D',
+    title: 'OMC-style iterative clarification',
+    threshold: state.threshold,
+    topology: state.topology.components.map((component) => ({
+      id: component.id,
+      status: component.status,
+    })),
+    round0: {
+      kind: round0.kind,
+      question: round0.question,
+      components: round0.candidates.map((component) => component.id),
+    },
+    roundCount: state.roundCount,
+    rounds,
+    final: {
+      ambiguity: state.currentAmbiguity,
+      pass: progress.pass === true,
+      specReady: progress.specReady === true,
+      approvalRequired: progress.approvalRequired === true,
+      completion: progress.kind,
+      approvalStatus: crystallized.clarification.approvalStatus,
+    },
+  };
+}
+
+function reportRound(recorded) {
+  return {
+    round: recorded.round.round,
+    component: recorded.round.targetComponent,
+    dimension: recorded.round.targetDimension,
+    question: recorded.round.question,
+    ambiguityBefore: recorded.round.ambiguityBefore,
+    ambiguityAfter: recorded.round.ambiguityAfter,
+  };
+}
+
 export async function runLiveSmokeCase(name, options = {}) {
   const key = String(name || '').toUpperCase();
   const spec = SMOKE_CASES[key];
   if (!spec) throw new Error('unknown smoke case: ' + name);
-  preflightSmokeCase(key);
+  const preflight = preflightSmokeCase(key);
+
+  if (key === 'D') {
+    return {
+      status: 'runtime-validation-pending',
+      case: key,
+      reason: 'Case D requires real user answers across multiple interview rounds; deterministic fixture passed but interactive Codex runtime is not auto-simulated.',
+      preflight,
+    };
+  }
 
   const codexBin = options.codexBin || process.env.CODEX_BIN || 'codex';
   const doctor = await runCodexDoctor(codexBin);
@@ -238,7 +413,7 @@ if (isMainModule()) {
     if (result.status === 'runtime-validation-pending') process.exitCode = 2;
     else if (result.status !== 'completed') process.exitCode = 1;
   } else {
-    const requested = args.includes('--preflight') ? ['A', 'B', 'C'] : [String(args[0] || 'A').toUpperCase()];
+    const requested = args.includes('--preflight') ? ['A', 'B', 'C', 'D'] : [String(args[0] || 'A').toUpperCase()];
     console.log(JSON.stringify(requested.map(preflightSmokeCase), null, 2));
   }
 }

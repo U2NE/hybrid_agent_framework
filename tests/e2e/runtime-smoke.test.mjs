@@ -22,3 +22,24 @@ test('runtime smoke Case C preflight proves security quality-lane activation and
   const security = result.modelRouting.stages.find((entry) => entry.stage === 'security-reviewer');
   assert.equal(security.model, 'gpt-6-sol');
 });
+
+
+test('runtime smoke Case D preflight proves iterative clarification report semantics', () => {
+  const report = preflightSmokeCase('D');
+
+  assert.equal(report.round0.kind, 'topology');
+  assert.equal(report.threshold, 0.20);
+  assert.ok(report.roundCount >= 2);
+  assert.equal(report.rounds.length, report.roundCount);
+  assert.ok(report.rounds.every((round) => round.question.length > 0));
+  assert.ok(report.rounds.every((round) => round.component && round.dimension));
+  assert.ok(report.rounds.every((round) => round.ambiguityBefore !== round.ambiguityAfter));
+
+  const targets = report.rounds.map((round) => round.component + ':' + round.dimension);
+  assert.ok(new Set(targets).size >= 2);
+  assert.ok(report.final.ambiguity <= report.threshold);
+  assert.equal(report.final.pass, true);
+  assert.equal(report.final.specReady, true);
+  assert.equal(report.final.approvalRequired, true);
+  assert.equal(report.final.approvalStatus, 'pending');
+});

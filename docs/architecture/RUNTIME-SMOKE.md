@@ -26,4 +26,8 @@ Case B creates two distinct tasks that both modify `src/shared.js`. Expected run
 
 Case C changes auth/authorization logic. Expected runtime evidence is tester, code reviewer, security reviewer, and verifier activation; the security reviewer is routed to Sol while routine worker/QA stages use Luna unless another escalation condition exists.
 
+Case D is the clarification smoke. Its deterministic fixture starts from a deliberately vague login request and must show Round 0 topology confirmation, multiple one-question rounds, weakest-target recomputation, ambiguity reduction to <= 0.20, specReady/pass, and pending approval. The preflight asserts the report contents rather than trusting process exit status.
+
+A real live Case D is not automatically simulated because its core behavior requires genuine user answers across rounds. `node scripts/runtime-smoke.mjs --live D` therefore reports `runtime-validation-pending` rather than faking a successful interview.
+
 A live run is considered pending rather than failed when Codex credentials are unavailable. Config/schema validation is a separate completed check.

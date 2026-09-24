@@ -52,3 +52,10 @@ Codex CLI is not an installation prerequisite.
 - CLI absent: installation succeeds; CLI-dependent validation is WARN/SKIP.
 - CLI present: installer runs strict config validation and separately reports runtime authentication readiness.
 - credentials absent: runtime is reported `pending`; installation still succeeds.
+
+
+## Clarification Case D
+
+Deterministic Case D is verified. It exercises Round 0 plus three iterative interview rounds and asserts the generated report contents, ending at ambiguity 0.18 with approval still pending.
+
+The current Codex installation is authenticated, but a real user-interactive Case D remains pending by design. The live runner returns runtime-validation-pending instead of inventing answers for the user.

@@ -147,6 +147,11 @@ function normalizeState(state) {
     blockers: Array.isArray(state.blockers) ? state.blockers : [],
     activeSpec: state.activeSpec || null,
     activePlan: state.activePlan || null,
+    // Backwards-compatible extension: multi-round clarification state is kept
+    // inside hybrid-state/v1 rather than introducing a second state store.
+    clarification: state.clarification && typeof state.clarification === 'object'
+      ? structuredClone(state.clarification)
+      : null,
     revision: Number.isInteger(state.revision) && state.revision > 0 ? state.revision : 1,
     updatedAt: state.updatedAt || new Date().toISOString(),
   };

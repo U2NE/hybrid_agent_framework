@@ -85,3 +85,36 @@ test('corrupt state does not silently reset', async () => {
   const contents = await fs.readFile(path.join(stateDir, 'STATE.md'), 'utf8');
   assert.match(contents, /\{broken/);
 });
+
+test('clarification state survives interruption without changing hybrid-state/v1', async () => {
+  const root = await fixture();
+  const store = new StateStore(root);
+  await store.init({
+    phase: 'clarify',
+    clarification: {
+      active: true,
+      type: 'brownfield',
+      threshold: 0.20,
+      topology: {
+        status: 'confirmed',
+        components: [{ id: 'auth', status: 'active' }],
+        deferrals: [],
+        lastTargetedComponentId: 'auth',
+      },
+      rounds: [{ round: 1, targetComponent: 'auth', targetDimension: 'constraints' }],
+      roundCount: 1,
+      currentAmbiguity: 0.42,
+      currentScores: { auth: { goal: 0.8, constraints: 0.4, criteria: 0.7, context: 0.8 } },
+      challengeModesUsed: ['contrarian'],
+      nextExpectedAction: 'ask-next-question',
+    },
+  });
+
+  const resumed = await new StateStore(root).load();
+  assert.equal(resumed.schema, 'hybrid-state/v1');
+  assert.equal(resumed.clarification.active, true);
+  assert.equal(resumed.clarification.type, 'brownfield');
+  assert.equal(resumed.clarification.roundCount, 1);
+  assert.equal(resumed.clarification.topology.lastTargetedComponentId, 'auth');
+  assert.deepEqual(resumed.clarification.challengeModesUsed, ['contrarian']);
+});
