@@ -31,22 +31,30 @@
 
 ## Context packet
 
-Workers receive only:
+Workers receive only the bounded contract needed for the assigned task:
 - Goal
-- relevant files/interfaces
 - acceptance criteria
 - constraints/non-goals
-- dependency outputs
+- relevant files/interfaces
+- dependencies and reduced dependency outputs
+- resolved decisions
+- required verification
 - assigned ownership
-- lead-selected routed model tier/model when an explicit override is used
+- lead-selected routed model/effort when an explicit override is used
+
+If dependency artifacts exceed the context budget, Hybrid reduces lower-priority prose by Markdown section while preserving these critical contract sections.
 
 ## Planning council
 
-Bounded work uses plan-lite. Complex/ambiguous work uses:
+Planning depth is tier/risk dependent:
 
-`Researcher → Planner → Architect → Plan Auditor`
+- Tier 0/1: no consensus council; Planner itself is conditional for bounded multi-task/dependency work.
+- Tier 2: Planner by default; Architect → Plan Auditor is activated only when architecture/security/plan risk warrants it, with at most 3 convergence iterations.
+- Tier 3/high-risk: Planner → Architect → Plan Auditor convergence is used, with at most 5 iterations.
 
-Architect and Plan Auditor are high-judgment stages, but their role names do not force Sol: ordinary review uses Luna xhigh and higher-risk work uses Luna max before unresolved cases enter Sol.
+Architect and Plan Auditor independently review the same plan revision; Planner combines their feedback only after both reviews. A rejected plan returns to revision/re-review, and reaching the cap never becomes approval. Even an approved consensus plan remains pending explicit user execution approval.
+
+Their role names do not force Sol: ordinary high-judgment review uses Luna xhigh/max, while exceptional unresolved reasoning may enter Sol.
 
 ## Execution
 
@@ -73,9 +81,16 @@ Static role TOMLs do not pin model IDs. If a routed model is rejected/unavailabl
 
 ## Verification
 
-`Implementer → Tester → Code Reviewer → [Security Reviewer] → Verifier`
+Quality depth is also tier/risk dependent.
 
-Security Reviewer is conditional: bounded security review uses Luna max, while complex exploit/trust-boundary or critical unresolved judgment may enter Sol. Tester and routine Verifier remain Luna-first.
+- Tier 0 normally uses implementer → lightweight verification.
+- Tier 1 normally uses implementer → verifier; Tester and Code Reviewer are added only when behavior/test/logic risk requires them.
+- Tier 2/3 use the fuller independent quality path.
+- Security Reviewer is conditional on an actual trust-boundary/security surface.
+
+For full quality work the shape is `Implementer → [Tester / Code Reviewer / Security Reviewer] → Verifier`, with independent read-only QA roles allowed to run concurrently when their inputs are ready.
+
+Bounded security review uses Luna max; complex exploit/trust-boundary or critical unresolved judgment may enter Sol. The final routine Verifier can independently downshift back to Luna medium.
 
 ## State and recovery
 
