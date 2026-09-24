@@ -117,19 +117,56 @@ function normalizePlanTask(task, index) {
     : [];
   if (acceptance.length === 0) throw new PlanError('task ' + id + ' requires acceptance_criteria');
 
-  const verify = String(task.verify || '').trim();
+  const dependsOn = normalizeArrayAlias(task, 'depends_on', 'dependencies', id);
+  const verify = normalizeTextAlias(task, 'verify', 'automated_verify', id);
   if (!verify) throw new PlanError('task ' + id + ' requires automated verify command');
 
   return {
     id,
     goal,
     files_modified: files,
-    depends_on: Array.isArray(task.depends_on) ? task.depends_on.map(String) : [],
+    depends_on: dependsOn,
     acceptance_criteria: acceptance,
     verify,
     owner: String(task.owner || 'implementer'),
     security_relevant: task.security_relevant === true,
   };
+}
+
+function normalizeArrayAlias(task, canonicalKey, aliasKey, taskId) {
+  const canonical = Array.isArray(task[canonicalKey])
+    ? task[canonicalKey].map(String).map((value) => value.trim()).filter(Boolean)
+    : null;
+  const alias = Array.isArray(task[aliasKey])
+    ? task[aliasKey].map(String).map((value) => value.trim()).filter(Boolean)
+    : null;
+
+  if (canonical && alias) {
+    const canonicalSet = [...new Set(canonical)].sort();
+    const aliasSet = [...new Set(alias)].sort();
+    if (JSON.stringify(canonicalSet) !== JSON.stringify(aliasSet)) {
+      throw new PlanError(
+        'task ' + taskId + ' has conflicting ' + canonicalKey + ' and ' + aliasKey
+      );
+    }
+  }
+
+  return [...new Set(canonical || alias || [])];
+}
+
+function normalizeTextAlias(task, canonicalKey, aliasKey, taskId) {
+  const canonicalPresent = task[canonicalKey] != null;
+  const aliasPresent = task[aliasKey] != null;
+  const canonical = canonicalPresent ? String(task[canonicalKey]).trim() : '';
+  const alias = aliasPresent ? String(task[aliasKey]).trim() : '';
+
+  if (canonicalPresent && aliasPresent && canonical !== alias) {
+    throw new PlanError(
+      'task ' + taskId + ' has conflicting ' + canonicalKey + ' and ' + aliasKey
+    );
+  }
+
+  return canonical || alias;
 }
 
 
