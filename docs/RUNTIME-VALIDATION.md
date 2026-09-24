@@ -74,6 +74,24 @@ Authenticated PASS.
 
 These observations prove request acceptance/rejection and fallback behavior. Codex did not expose independent serving-model attestation, so Hybrid does not claim the backend identity was independently verified.
 
+### Case E — worktree isolation lifecycle
+
+Authenticated semantic PASS.
+
+The scheduler selected `mode=worktree` for a forced-risk two-writer wave. Hybrid's minimal worktree runtime bridge then:
+
+- created two real detached Git worktrees from one clean baseline commit;
+- ran two authenticated Luna-medium workers concurrently with different worktree cwd paths;
+- observed no recursive delegation;
+- collected Git patches only from each task's declared file ownership;
+- integrated both patches into the main workspace with `git apply --check` before application;
+- ran an independent authenticated Luna-medium verifier against the integrated main workspace and captured a successful fresh command event;
+- removed both temporary worktrees, pruned Git worktree metadata, and verified that `git worktree list` contained only the main workspace afterward.
+
+The deterministic bridge tests also prove ownership escape is rejected before integration and an integration conflict rolls the main workspace back instead of silently overwriting.
+
+This is a disposable smoke repository, not a claim that an arbitrary production repository merge is risk-free.
+
 ## Still intentionally pending
 
 ### Case D — real user-interactive clarification
@@ -94,7 +112,6 @@ A real live Case D is intentionally not auto-simulated because its core evidence
 The following are not claimed:
 
 - independent serving-model identity attestation beyond accepted model/effort requests;
-- a live production-repository worktree merge/integration scenario (the isolation policy and fallback are regression-tested);
 - real user-interactive Case D.
 
 ## Installer boundary

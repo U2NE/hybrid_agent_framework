@@ -351,7 +351,7 @@ export function mergeAgentsInstructions(content) {
     '- Use `.planning/` as canonical state; `.ai/wiki/` is derived.',
     '- Scout the repository before asking user questions that code can answer.',
     '- Keep dispatch flat: only the lead spawns sibling Hybrid roles; workers return results and never recursively delegate.',
-    '- Serialize same-file writers and respect task dependencies.',
+    '- Serialize same-file writers and respect task dependencies; when scheduler isolation selects worktree mode, the lead owns create → isolated cwd → patch handoff → fail-closed integration → verification → cleanup via `.hybrid/core/worktree/index.mjs`.',
     '- Route work through the Luna effort ladder first; use Sol only after Luna max is insufficient or the task is exceptionally difficult/critical according to `.hybrid/core/routing/model-routing.json`.',
     '- If an explicit routed model is unavailable/rejected, retry that spawn without model/effort override and record session-inheritance fallback.',
     '- Separate implementation from final testing/review/verification.',

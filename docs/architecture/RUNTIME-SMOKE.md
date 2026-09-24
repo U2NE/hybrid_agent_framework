@@ -7,6 +7,7 @@ This is a functional orchestration smoke, not a GSD/OMC/Hybrid benchmark.
 ```bash
 npm run smoke:preflight
 npm run smoke:routing:preflight
+npm run smoke:worktree:preflight
 ```
 
 Preflight proves framework-side policy only. It does not prove subagent runtime behavior.
@@ -20,6 +21,7 @@ node scripts/runtime-smoke.mjs --live A
 node scripts/runtime-smoke.mjs --live B
 node scripts/runtime-smoke.mjs --live C
 npm run smoke:routing:live
+npm run smoke:worktree:live
 ```
 
 Each A/B/C run creates an isolated temporary Git repository, installs Hybrid, runs `codex exec --strict-config --json`, and preserves JSONL/stderr under that workspace's `.planning/runtime-smoke/`.
@@ -30,6 +32,7 @@ A live case is PASS only after semantic validation of the generated report and o
 - **Case B:** two tasks modify `src/shared.js`; requires separate observed waves, no overlap, both final changes, and final verifier completion.
 - **Case C:** authorization change; implementer first, then tester + code reviewer + security reviewer as an independent QA wave, then verifier. The bounded security reviewer uses Luna max.
 - **Routing probe:** exercises Luna high/xhigh/max request acceptance plus invalid-model rejection and no-override session-inheritance retry.
+- **Case E / worktree smoke:** forces worktree isolation for two independent writers and semantically requires real Git worktree creation, distinct worker cwd paths, overlapping authenticated workers, declared-owner patch handoff, fail-closed integration, integrated file checks, fresh final verifier command evidence, cleanup, and no orphan worktrees.
 
 Authenticated A, B, and C all reached semantic PASS during the audit. The runtime does not expose independent backend model-attestation evidence, so reports state only that explicit model/effort requests were accepted.
 

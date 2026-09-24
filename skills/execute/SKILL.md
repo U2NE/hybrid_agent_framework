@@ -7,7 +7,7 @@ description: Execute an approved plan using dependency waves, flat sibling worke
 
 Compute dependency waves from the approved PLAN. One writer per file per wave.
 
-Independent tasks in the same wave are parallel-eligible sibling workers. Tasks with dependencies run in later waves. Same-file writers are serialized. For multiple parallel writers, evaluate isolation: precise tiny ownership may share the workspace; lockfiles/generated outputs/migrations/formatters/low ownership confidence use worktree isolation when available, otherwise safe serialization.
+Independent tasks in the same wave are parallel-eligible sibling workers. Tasks with dependencies run in later waves. Same-file writers are serialized. For multiple parallel writers, evaluate isolation: precise tiny ownership may share the workspace; lockfiles/generated outputs/migrations/formatters/low ownership confidence use worktree isolation when available, otherwise safe serialization. When worktree mode is selected, the lead owns the lifecycle through the Hybrid worktree bridge: create one detached worktree per writer, run each worker with that worktree as cwd, collect only declared-owner patches, fail closed on integration conflict, verify the integrated main workspace, then remove/prune every temporary worktree.
 
 Give each implementer only a fresh context packet:
 - Goal

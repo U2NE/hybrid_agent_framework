@@ -9,9 +9,11 @@
     "test:unit": "node --test tests/scheduler/*.test.mjs tests/requirements/*.test.mjs tests/state/*.test.mjs tests/wiki/*.test.mjs tests/verification/*.test.mjs",
     "test:e2e": "node --test tests/e2e/*.test.mjs",
     "smoke:preflight": "node scripts/runtime-smoke.mjs --preflight",
-    "check": "node --check core/classifier/index.mjs && node --check core/requirements/index.mjs && node --check core/scheduler/index.mjs && node --check core/state/index.mjs && node --check core/routing/index.mjs && node --check core/verification/index.mjs && node --check core/wiki/index.mjs && node --check core/docs/index.mjs && node --check core/planning/index.mjs && node --check core/context/index.mjs && node --check core/artifacts/index.mjs && node --check core/orchestrator/index.mjs && node --check bin/hybrid.mjs && node --check scripts/install-project.mjs && node --check scripts/runtime-smoke.mjs && node --check scripts/routing-runtime-smoke.mjs",
+    "check": "node --check core/classifier/index.mjs && node --check core/requirements/index.mjs && node --check core/scheduler/index.mjs && node --check core/state/index.mjs && node --check core/routing/index.mjs && node --check core/verification/index.mjs && node --check core/wiki/index.mjs && node --check core/docs/index.mjs && node --check core/planning/index.mjs && node --check core/context/index.mjs && node --check core/artifacts/index.mjs && node --check core/orchestrator/index.mjs && node --check core/worktree/index.mjs && node --check bin/hybrid.mjs && node --check scripts/install-project.mjs && node --check scripts/runtime-smoke.mjs && node --check scripts/routing-runtime-smoke.mjs && node --check scripts/worktree-runtime-smoke.mjs",
     "smoke:routing:preflight": "node scripts/routing-runtime-smoke.mjs --preflight",
-    "smoke:routing:live": "node scripts/routing-runtime-smoke.mjs"
+    "smoke:routing:live": "node scripts/routing-runtime-smoke.mjs",
+    "smoke:worktree:preflight": "node scripts/worktree-runtime-smoke.mjs --preflight",
+    "smoke:worktree:live": "node scripts/worktree-runtime-smoke.mjs"
   },
   "engines": {
     "node": ">=20"

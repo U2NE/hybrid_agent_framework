@@ -17,6 +17,7 @@ codex login
 node scripts/runtime-smoke.mjs --live A
 node scripts/runtime-smoke.mjs --live B
 node scripts/runtime-smoke.mjs --live C
+npm run smoke:worktree:live
 ```
 
 Each live run creates an isolated temporary Git repository, installs Hybrid, invokes `codex exec --json`, and preserves the event log under the temporary workspace's `.planning/runtime-smoke/`.
@@ -71,3 +72,7 @@ Expected routing:
 - routine Verifier can downshift to Luna medium after a heavier review stage.
 
 A successful file edit alone does not prove orchestration. Review `events.jsonl` and the generated runtime smoke report before marking a live case verified.
+
+## Case E — real worktree isolation
+
+`npm run smoke:worktree:live` forces a two-writer wave into worktree mode. PASS requires filesystem/Git/runtime evidence rather than worker self-report: two real detached worktrees, distinct worker cwd paths, overlapping authenticated workers, owned Git patches, successful main-workspace integration, fresh verifier command evidence, cleanup of the temporary worktrees, and a final `git worktree list` containing only the main workspace. Integration conflict and ownership escape are fail-closed deterministic regressions.
