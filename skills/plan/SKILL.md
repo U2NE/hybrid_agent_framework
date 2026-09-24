@@ -16,7 +16,7 @@ Use the smallest planning flow appropriate to the tier.
 
 Model routing:
 - Researcher and ordinary Planner work default to Luna.
-- Planner escalates to Sol for high ambiguity, architectural/large-refactor decisions, security-sensitive planning, or complex cross-module debugging.
+- Planner raises Luna reasoning effort first for high ambiguity, architectural/large-refactor decisions, security-sensitive planning, and complex cross-module debugging; Sol is reserved for exceptional or unresolved reasoning after the Luna ladder is insufficient.
 - Architect and Plan Auditor use Luna xhigh/max by default according to stage risk; unresolved exceptional planning/architecture may escalate to Sol.
 - Their Sol use does not pin later worker stages to Sol.
 

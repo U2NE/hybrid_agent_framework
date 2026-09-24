@@ -63,9 +63,11 @@ tester -> code-reviewer -> security-reviewer -> verifier
 ```
 
 Expected routing:
-- Security Reviewer: Sol.
-- Code Reviewer: Sol for the security-sensitive review.
-- routine Tester/Verifier: Luna.
-- ordinary Implementer: Luna unless the implementation itself is complex cross-module debugging.
+- ordinary Implementer: Luna according to implementation difficulty.
+- Tester: Luna unless independently escalated.
+- Code Reviewer: raises Luna effort first; Sol is reserved for exceptional unresolved review.
+- bounded Security Reviewer: Luna max.
+- complex exploit/trust-boundary reasoning may enter Sol.
+- routine Verifier can downshift to Luna medium after a heavier review stage.
 
 A successful file edit alone does not prove orchestration. Review `events.jsonl` and the generated runtime smoke report before marking a live case verified.
