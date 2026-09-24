@@ -1,0 +1,54 @@
+# Codex 0.156.1 multi-agent role registration.
+#
+# Hybrid does not set agents.default_subagent_model here. The framework's
+# logical routing policy lives in core/routing/model-routing.json so a routed
+# model can be retried without an explicit override and safely fall back to the
+# Codex session/default model when unavailable.
+[agents]
+enabled = true
+max_depth = 1
+max_concurrent_threads_per_session = 8
+
+[agents."scout"]
+description = "Repository scout"
+config_file = "agents/scout.toml"
+
+[agents."researcher"]
+description = "Technical researcher and requirements analyst"
+config_file = "agents/researcher.toml"
+
+[agents."planner"]
+description = "Execution planner"
+config_file = "agents/planner.toml"
+
+[agents."architect"]
+description = "Architecture reviewer"
+config_file = "agents/architect.toml"
+
+[agents."plan-auditor"]
+description = "Plan auditor"
+config_file = "agents/plan-auditor.toml"
+
+[agents."implementer"]
+description = "Implementation worker"
+config_file = "agents/implementer.toml"
+
+[agents."tester"]
+description = "Independent tester"
+config_file = "agents/tester.toml"
+
+[agents."code-reviewer"]
+description = "Independent code reviewer"
+config_file = "agents/code-reviewer.toml"
+
+[agents."security-reviewer"]
+description = "Conditional security reviewer"
+config_file = "agents/security-reviewer.toml"
+
+[agents."verifier"]
+description = "Final verifier"
+config_file = "agents/verifier.toml"
+
+[agents."knowledge-synthesizer"]
+description = "Knowledge synthesizer"
+config_file = "agents/knowledge-synthesizer.toml"

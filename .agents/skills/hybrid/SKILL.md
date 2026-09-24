@@ -1,0 +1,1 @@
+../../../skills/hybrid/SKILL.md

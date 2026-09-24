@@ -1,0 +1,16 @@
+{
+  "schema": "hybrid-model-routing/v1",
+  "default_model_tier": "luna",
+  "heavy_model_tier": "sol",
+  "fallback": "session-inheritance",
+  "tiers": {
+    "luna": {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium"
+    },
+    "sol": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "high"
+    }
+  }
+}
