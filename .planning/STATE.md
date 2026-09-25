@@ -13,8 +13,8 @@
   "activeSpec": ".planning/phases/04-hardening/SPEC.md",
   "activePlan": ".planning/phases/04-hardening/PLAN.md",
   "clarification": null,
-  "revision": 20,
-  "updatedAt": "2026-09-25T11:53:30Z"
+  "revision": 21,
+  "updatedAt": "2026-09-25T12:04:10Z"
 }
 -->
 
@@ -24,7 +24,7 @@
 - Phase: 04-hardening
 - Status: verified-interactive-runtime-pending
 - Next action: exercise Case D with genuine user answers; explicit allowlisted model/effort fail-closed routing and authenticated revised Cases J/K provenance validation are complete, with Tier 0 Implementer ownership, parallel sibling provenance, Lead-only central persistence, and the current full deterministic regression passing
-- Revision: 20
-- Updated: 2026-09-25T11:53:30Z
+- Revision: 21
+- Updated: 2026-09-25T12:04:10Z
 
 This file is canonical project state. Do not silently reconstruct or reset it if the machine-readable block is corrupt or uses an unsupported schema.

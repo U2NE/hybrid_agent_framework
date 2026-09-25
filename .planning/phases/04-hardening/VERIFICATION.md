@@ -3,7 +3,7 @@
 ## Deterministic
 
 - npm run check: PASS.
-- npm test: 210/210 PASS at the current model-policy/provenance hardening checkpoint.
+- npm test: 211/211 PASS at the current model-policy/provenance hardening checkpoint.
 - smoke preflight A/B/C/D: PASS.
 - routing preflight: PASS.
 - wiki lint: PASS.
