@@ -347,7 +347,7 @@ export function findProofGaps(input = {}) {
       entry.assessed === true &&
       entry.verified === true &&
       (!policy.requireFresh || entry.fresh === true) &&
-      (!expectedSnapshot || !entry.snapshot || entry.snapshot === expectedSnapshot)
+      (!expectedSnapshot || entry.snapshot === expectedSnapshot)
     );
 
     if (!matching.length) {
@@ -366,7 +366,7 @@ export function findProofGaps(input = {}) {
       entry.assessed === true &&
       entry.verified === true &&
       (!policy.requireFresh || entry.fresh === true) &&
-      (!expectedSnapshot || !entry.snapshot || entry.snapshot === expectedSnapshot)
+      (!expectedSnapshot || entry.snapshot === expectedSnapshot)
     );
     if (!found) {
       gaps.push({
