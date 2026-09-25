@@ -175,11 +175,10 @@ test('material revision CLI apply remains fenced while the parent has an active 
   );
   assert.equal((await runStore.loadGraph()).descriptorHash, parent.descriptorHash);
 
-  await leaseStore.release(
-    active.authorization.leaseId,
-    active.authorization.leaseToken,
-    { outcome: 'reconciled' }
-  );
+  await runStore.abortTaskLease(active.authorization, {
+    reasonCode: 'MATERIAL_REVISION_REQUIRED',
+    evidenceRefs: ['reconcile:material-revision-cli'],
+  });
   const applied = await runCli(
     ['revision', 'apply', runId, applyInputPath, project],
     project

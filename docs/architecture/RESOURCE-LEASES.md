@@ -77,7 +77,7 @@ The runtime protocol is a graph-revision barrier:
 
 1. compute a deterministic non-material child graph from the current sealed graph;
 2. if any old-revision lease is active, return `drain-required` and leave the current graph unchanged;
-3. the Lead must complete/reconcile or explicitly abort those attempts and durably release their leases;
+3. the Lead must complete/reconcile those attempts, then release them only through a durable terminal transition; use `lease abort` for an explicit reconciled abort;
 4. retry the same extension request;
 5. publish the child graph under the normal graph-revision fence;
 6. acquire a **new attempt** against the child graph before redispatch.
@@ -88,11 +88,40 @@ Identical concurrent extension requests converge on one child descriptor. Differ
 
 Runtime lease extension may add only semantic `resources`. It rejects caller-controlled `revisionId`, `files_modified`, `writes`, `reads`, `plan`, or `spec`. File-contract changes and product/API/schema/feature-scope/requirement/security semantic changes must go through the material revision approval flow. Material flags on an extension request return `user-approval-required` without mutating the graph.
 
-## Release and recovery
+## Evidence-bound release and recovery
 
-Release requires the lease token and is fingerprinted by its result. Replaying the same release is idempotent. Releasing the same lease with a contradictory result is fenced.
+A lease is not releasable merely because the worker returned, the Lead wants to reschedule, or the process restarted. Release authority comes from the durable transition ledger.
 
-Do not release an active lease merely because the controlling process restarted. First reconcile durable transitions and observed worktree evidence. Release after completion, explicit abort reconciliation, or another durable outcome has been established.
+The only terminal transition kinds accepted for release are:
+
+- `task_completed`;
+- `recovered_task_completed`;
+- `task_aborted_reconciled`.
+
+The transition must be durably present in `TRANSITIONS.jsonl`, carry at least one evidence reference, and match the exact lease run, graph revision, task, attempt, and effect policy. `ExecutionRunStore.releaseTaskLease()` reads that persisted transition, constructs a `hybrid-lease-release-proof/v1` bound to the lease descriptor and transition fingerprint, and only then calls the low-level lease store.
+
+The low-level `ResourceLeaseStore.release()` rejects null, arbitrary result objects, or proofs bound to another task/attempt/graph. It independently re-reads `TRANSITIONS.jsonl` and requires the proof fingerprint to match the exact persisted terminal record before an active lease can be released. Released lease records are revalidated against that ledger on later store loads, so missing or corrupted terminal evidence fails closed after restart as well. **Raw token-only/null-result release is forbidden.** Exact replay of the same verified proof is idempotent; a contradictory proof is fenced.
+
+For a task that must stop without successful completion, use an explicit reconciled abort. `ExecutionRunStore.abortTaskLease()` / `hybrid lease abort` requires at least one reconciliation evidence reference, commits `task_aborted_reconciled`, then releases through the same proof path. A plain cancellation string is not release authority.
+
+Current-workspace and worktree evidence are **sources for the terminal transition**, not substitutes for it. For example:
+
+```text
+workspace-guard complete
+  -> commit task_completed with workspace-guard:<guard-id> evidence
+  -> lease release using that transition id
+```
+
+or, when abandoning the attempt:
+
+```text
+reconcile/discard observed effects
+  -> lease abort with evidence refs
+  -> task_aborted_reconciled
+  -> evidence-bound release
+```
+
+This means a graph revision barrier cannot be cleared by dropping a lease without durable reconciliation evidence.
 
 ## CLI
 
@@ -101,8 +130,10 @@ Installed projects may use:
 ```text
 node .hybrid/bin/hybrid.mjs lease acquire <run-id> <task-id> <attempt-id> [project-root]
 node .hybrid/bin/hybrid.mjs lease verify <run-id> <authorization.json> [project-root]
+node .hybrid/bin/hybrid.mjs lease extend <run-id> <extension.json> [project-root]
+node .hybrid/bin/hybrid.mjs lease release <run-id> <authorization.json> <terminal-transition-id> [project-root]
+node .hybrid/bin/hybrid.mjs lease abort <run-id> <authorization.json> <abort.json> [project-root]
 node .hybrid/bin/hybrid.mjs lease list <run-id> [project-root]
-node .hybrid/bin/hybrid.mjs lease release <run-id> <lease-id> <lease-token> [project-root]
 ```
 
-A mutating Hybrid worker is not authorized to start without a current active dispatch authorization for its sealed task attempt. When that task is scheduled in the shared current workspace rather than a detached worktree, the same authorization must also open the repository-global current-workspace mutation guard before spawn; guard completion must succeed before task completion is accepted and the lease is released. See `WORKSPACE-MUTATION-GUARD.md`.
+A mutating Hybrid worker is not authorized to start without a current active dispatch authorization for its sealed task attempt. When that task is scheduled in the shared current workspace rather than a detached worktree, the same authorization must also open the repository-global current-workspace mutation guard before spawn. Guard completion must succeed first; then commit the terminal completion/reconciliation transition; then perform evidence-bound lease release. See `WORKSPACE-MUTATION-GUARD.md`.

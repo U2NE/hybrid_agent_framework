@@ -18,10 +18,11 @@ sealed execution graph
   -> worker spawn
   -> workspace-guard complete
   -> task completion evidence / verification
-  -> lease release
+  -> durable terminal task_completed / recovered_task_completed transition
+  -> evidence-bound lease release using that transition
 ```
 
-A worker may not start before both the resource lease and workspace guard are active. A task may not be treated as successfully completed, and its lease should not be released, before guard completion succeeds.
+A worker may not start before both the resource lease and workspace guard are active. Guard completion is necessary but is not itself lease-release authority. After guard completion succeeds, the Lead must commit a durable terminal `task_completed` or `recovered_task_completed` transition with the guard/verification evidence and then release through `ExecutionRunStore.releaseTaskLease()` / `hybrid lease release`. An abandoned attempt uses `hybrid lease abort` only after reconciliation evidence exists; that path commits `task_aborted_reconciled` before release.
 
 Installed CLI:
 

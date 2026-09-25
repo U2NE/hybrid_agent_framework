@@ -68,11 +68,10 @@ test('lease extend CLI drains old revision then publishes child and requires a f
   assert.equal(blocked.graph.descriptorHash, graph.descriptorHash);
   assert.equal(blocked.activeLeases.length, 1);
 
-  await leaseStore.release(
-    oldAttempt.authorization.leaseId,
-    oldAttempt.authorization.leaseToken,
-    { outcome: 'aborted-and-reconciled-before-extension' }
-  );
+  await runStore.abortTaskLease(oldAttempt.authorization, {
+    reasonCode: 'RESOURCE_EXTENSION_REQUIRED',
+    evidenceRefs: ['reconcile:lease-extension-cli'],
+  });
 
   const extended = await runCli(
     ['lease', 'extend', runId, extensionPath, project],

@@ -6,6 +6,7 @@ import { validateSealedExecutionGraph } from '../execution-graph/index.mjs';
 
 export const RESOURCE_LEASE_SCHEMA = 'hybrid-resource-leases/v1';
 export const DISPATCH_AUTHORIZATION_SCHEMA = 'hybrid-dispatch-authorization/v1';
+export const LEASE_RELEASE_PROOF_SCHEMA = 'hybrid-lease-release-proof/v1';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 2_000;
 const DEFAULT_STALE_LOCK_MS = 10_000;
@@ -131,11 +132,9 @@ export class ResourceLeaseStore {
     });
   }
 
-  async release(leaseId, leaseToken, result = null) {
+  async release(leaseId, leaseToken, proof) {
     const id = safeSegment(leaseId, 'leaseId');
     const token = requiredString(leaseToken, 'leaseToken');
-    const releaseResult = boundedValue(result);
-    const releaseFingerprint = stableHash(releaseResult);
 
     return this.#withStoreLock(async () => {
       const store = await this.#loadUnlocked();
@@ -147,11 +146,14 @@ export class ResourceLeaseStore {
         );
       }
       assertToken(lease.leaseToken, token);
+      validateLeaseReleaseProof(proof, lease);
+      const releaseResult = boundedValue(proof);
+      const releaseFingerprint = stableHash(releaseResult);
 
       if (lease.status === 'released') {
         if (lease.releaseFingerprint !== releaseFingerprint) {
           throw new ResourceLeaseError(
-            'released lease was replayed with a different result',
+            'released lease was replayed with a different release proof',
             'LEASE_RELEASE_FENCED',
             { leaseId: id }
           );
@@ -170,6 +172,8 @@ export class ResourceLeaseStore {
           { leaseId: id }
         );
       }
+
+      await assertReleaseProofBackedByLedger(this.runDir, proof, lease);
 
       lease.status = 'released';
       lease.releasedAt = new Date().toISOString();
@@ -215,7 +219,7 @@ export class ResourceLeaseStore {
     });
   }
 
-  async assertAuthorization(graph, authorization) {
+  async assertAuthorization(graph, authorization, options = {}) {
     validateGraphForStore(graph, this.runId);
     validateDispatchAuthorizationShape(authorization);
 
@@ -234,7 +238,11 @@ export class ResourceLeaseStore {
     const lease = store.leases.find(
       (item) => item.leaseId === authorization.leaseId
     );
-    if (!lease || lease.status !== 'active') {
+    if (
+      !lease ||
+      (lease.status !== 'active' &&
+        !(options.allowReleased === true && lease.status === 'released'))
+    ) {
       throw new ResourceLeaseError(
         'dispatch authorization has no active durable lease',
         'DISPATCH_AUTH_INACTIVE'
@@ -290,6 +298,15 @@ export class ResourceLeaseStore {
       );
     }
     validateStore(store, this.runId);
+    for (const lease of store.leases) {
+      if (lease.status === 'released') {
+        await assertReleaseProofBackedByLedger(
+          this.runDir,
+          lease.releaseResult,
+          lease
+        );
+      }
+    }
     return store;
   }
 
@@ -451,6 +468,183 @@ export function validateDispatchAuthorizationShape(value) {
   return true;
 }
 
+async function assertReleaseProofBackedByLedger(runDir, proof, lease) {
+  const transitionsPath = path.join(runDir, 'TRANSITIONS.jsonl');
+  let raw;
+  try {
+    raw = await fs.readFile(transitionsPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new ResourceLeaseError(
+        'lease release transition is not present in the durable transition ledger',
+        'LEASE_RELEASE_TRANSITION_NOT_FOUND',
+        { transitionId: proof.transitionId, transitionsPath }
+      );
+    }
+    throw error;
+  }
+
+  const seen = new Map();
+  let matched = null;
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim());
+  for (let index = 0; index < lines.length; index++) {
+    let record;
+    try {
+      record = JSON.parse(lines[index]);
+    } catch {
+      throw new ResourceLeaseError(
+        'durable transition ledger contains invalid JSON',
+        'LEASE_RELEASE_LEDGER_CORRUPT',
+        { line: index + 1, transitionsPath }
+      );
+    }
+
+    if (
+      record?.schema !== 'hybrid-transition/v1' ||
+      typeof record?.runId !== 'string' ||
+      typeof record?.transitionId !== 'string' ||
+      typeof record?.graphRevision !== 'string' ||
+      typeof record?.nodeId !== 'string' ||
+      typeof record?.attemptId !== 'string' ||
+      typeof record?.kind !== 'string' ||
+      typeof record?.requestFingerprint !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(record.requestFingerprint) ||
+      !Array.isArray(record?.evidenceRefs)
+    ) {
+      throw new ResourceLeaseError(
+        'durable transition ledger contains an invalid transition record',
+        'LEASE_RELEASE_LEDGER_CORRUPT',
+        { line: index + 1, transitionsPath }
+      );
+    }
+
+    const prior = seen.get(record.transitionId);
+    if (prior && prior.requestFingerprint !== record.requestFingerprint) {
+      throw new ResourceLeaseError(
+        'durable transition ledger contains a fenced transition id',
+        'LEASE_RELEASE_LEDGER_CORRUPT',
+        { transitionId: record.transitionId, transitionsPath }
+      );
+    }
+    if (!prior) seen.set(record.transitionId, record);
+    if (record.transitionId === proof.transitionId) matched = record;
+  }
+
+  if (!matched) {
+    throw new ResourceLeaseError(
+      'lease release transition is not present in the durable transition ledger',
+      'LEASE_RELEASE_TRANSITION_NOT_FOUND',
+      { transitionId: proof.transitionId, transitionsPath }
+    );
+  }
+
+  const errors = [];
+  if (stableHash(matched) !== proof.transitionFingerprint) {
+    errors.push('transition fingerprint mismatch');
+  }
+  if (matched.runId !== lease.runId) errors.push('runId mismatch');
+  if (matched.graphRevision !== lease.graphRevision) errors.push('graphRevision mismatch');
+  if (matched.nodeId !== lease.taskId) errors.push('task mismatch');
+  if (matched.attemptId !== lease.attemptId) errors.push('attempt mismatch');
+  if (matched.kind !== proof.transitionKind) errors.push('transitionKind mismatch');
+  if (
+    matched.effectPolicy != null &&
+    lease.effectPolicy != null &&
+    matched.effectPolicy !== lease.effectPolicy
+  ) {
+    errors.push('effectPolicy mismatch');
+  }
+  if (!matched.evidenceRefs.length) errors.push('terminal transition has no evidence');
+  if (
+    !['task_completed', 'recovered_task_completed', 'task_aborted_reconciled']
+      .includes(matched.kind)
+  ) {
+    errors.push('transition kind is not terminal for lease release');
+  }
+  if (
+    matched.kind === 'task_aborted_reconciled' &&
+    matched.result?.outcome !== 'aborted-reconciled'
+  ) {
+    errors.push('reconciled abort outcome mismatch');
+  }
+
+  if (errors.length) {
+    throw new ResourceLeaseError(
+      'lease release proof is not backed by the exact durable terminal transition: ' +
+        errors.join('; '),
+      'LEASE_RELEASE_LEDGER_MISMATCH',
+      {
+        transitionId: proof.transitionId,
+        errors,
+        transitionsPath,
+      }
+    );
+  }
+
+  return true;
+}
+
+export function validateLeaseReleaseProof(value, lease = null) {
+  const errors = [];
+  if (value?.schema !== LEASE_RELEASE_PROOF_SCHEMA) errors.push('invalid schema');
+  if (value?.source !== 'transition') errors.push('invalid source');
+  for (const field of [
+    'transitionId',
+    'transitionKind',
+    'transitionFingerprint',
+    'runId',
+    'descriptorHash',
+    'graphRevision',
+    'taskId',
+    'attemptId',
+    'leaseId',
+    'outcome',
+  ]) {
+    if (typeof value?.[field] !== 'string' || !value[field]) {
+      errors.push('missing ' + field);
+    }
+  }
+  if (
+    typeof value?.transitionFingerprint === 'string' &&
+    !/^[0-9a-f]{64}$/.test(value.transitionFingerprint)
+  ) {
+    errors.push('invalid transitionFingerprint');
+  }
+  if (
+    !['task_completed', 'recovered_task_completed', 'task_aborted_reconciled']
+      .includes(value?.transitionKind)
+  ) {
+    errors.push('invalid transitionKind');
+  }
+  const expectedOutcome = value?.transitionKind === 'task_aborted_reconciled'
+    ? 'aborted-reconciled'
+    : 'completed';
+  if (value?.outcome !== expectedOutcome) errors.push('invalid outcome');
+
+  if (lease) {
+    const bindings = [
+      ['runId', lease.runId],
+      ['descriptorHash', lease.descriptorHash],
+      ['graphRevision', lease.graphRevision],
+      ['taskId', lease.taskId],
+      ['attemptId', lease.attemptId],
+      ['leaseId', lease.leaseId],
+    ];
+    for (const [field, expected] of bindings) {
+      if (value?.[field] !== expected) errors.push(field + ' mismatch');
+    }
+  }
+
+  if (errors.length) {
+    throw new ResourceLeaseError(
+      'lease release proof validation failed: ' + errors.join('; '),
+      'INVALID_LEASE_RELEASE_PROOF',
+      { errors }
+    );
+  }
+  return true;
+}
+
 function validateGraphForStore(graph, runId) {
   validateSealedExecutionGraph(graph);
   if (graph.runId !== runId) {
@@ -512,6 +706,26 @@ function validateStore(store, runId) {
         errors.push('invalid requestFingerprint');
       }
       if (!lease?.taskContract || !lease?.capabilityGrant) errors.push('incomplete lease contract');
+      if (lease?.status === 'released') {
+        try {
+          validateLeaseReleaseProof(lease.releaseResult, lease);
+        } catch {
+          errors.push('invalid release proof');
+        }
+        if (
+          typeof lease?.releaseFingerprint !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(lease.releaseFingerprint) ||
+          lease.releaseFingerprint !== stableHash(lease.releaseResult)
+        ) {
+          errors.push('invalid releaseFingerprint');
+        }
+      } else if (
+        lease?.releaseResult !== null ||
+        lease?.releaseFingerprint !== null ||
+        lease?.releasedAt !== null
+      ) {
+        errors.push('active lease has release metadata');
+      }
     }
   }
 

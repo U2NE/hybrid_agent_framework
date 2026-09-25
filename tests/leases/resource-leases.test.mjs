@@ -9,6 +9,10 @@ import {
   ResourceLeaseStore,
   buildTaskLeaseRequest,
 } from '../../core/leases/index.mjs';
+import {
+  ExecutionRunStore,
+  buildLeaseReleaseProof,
+} from '../../core/transitions/index.mjs';
 
 async function tempProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'hybrid-lease-test-'));
@@ -16,6 +20,48 @@ async function tempProject() {
 
 function graphFor(tasks, runId = 'run-lease') {
   return sealApprovedExecutionPlan({ tasks }, { runId });
+}
+
+function forgedReleaseProofFor(authorization, overrides = {}) {
+  return {
+    schema: 'hybrid-lease-release-proof/v1',
+    source: 'transition',
+    transitionId: 'complete-' + authorization.attemptId,
+    transitionKind: 'task_completed',
+    transitionFingerprint: 'a'.repeat(64),
+    runId: authorization.runId,
+    descriptorHash: authorization.descriptorHash,
+    graphRevision: authorization.graphRevision,
+    taskId: authorization.taskId,
+    attemptId: authorization.attemptId,
+    leaseId: authorization.leaseId,
+    outcome: 'completed',
+    ...overrides,
+  };
+}
+
+async function commitCompletionProof(root, graph, authorization) {
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+  const committed = await runStore.commitTransition({
+    transitionId: 'complete-' + authorization.attemptId,
+    graphRevision: authorization.graphRevision,
+    nodeId: authorization.taskId,
+    attemptId: authorization.attemptId,
+    kind: 'task_completed',
+    effectPolicy: authorization.effectPolicy,
+    request: {
+      descriptorHash: authorization.descriptorHash,
+      leaseId: authorization.leaseId,
+    },
+    evidenceRefs: ['test:lease-release'],
+    result: { outcome: 'pass' },
+  });
+  return {
+    runStore,
+    transition: committed.record,
+    proof: buildLeaseReleaseProof(authorization, committed.record),
+  };
 }
 
 test('lease request is deterministically bound to the sealed task contract', () => {
@@ -214,7 +260,7 @@ test('concurrent conflicting acquisition has exactly one winner', async () => {
   assert.equal(rejected.reason.code, 'LEASE_CONFLICT');
 });
 
-test('release is token-bound idempotent and a released attempt cannot execute again', async () => {
+test('release is token-bound ledger-backed idempotent and a released attempt cannot execute again', async () => {
   const root = await tempProject();
   const graph = graphFor([{
     id: 'A',
@@ -224,30 +270,71 @@ test('release is token-bound idempotent and a released attempt cannot execute ag
   }]);
   const store = new ResourceLeaseStore(root, graph.runId);
   const acquired = await store.acquire(graph, 'A');
+  const forgedProof = forgedReleaseProofFor(acquired.authorization);
 
   await assert.rejects(
-    () => store.release(acquired.lease.leaseId, 'wrong-token', { outcome: 'pass' }),
+    () => store.release(acquired.lease.leaseId, 'wrong-token', forgedProof),
     (error) => error instanceof ResourceLeaseError && error.code === 'LEASE_TOKEN_INVALID'
+  );
+  await assert.rejects(
+    () => store.release(
+      acquired.lease.leaseId,
+      acquired.authorization.leaseToken,
+      null
+    ),
+    (error) =>
+      error instanceof ResourceLeaseError &&
+      error.code === 'INVALID_LEASE_RELEASE_PROOF'
+  );
+  await assert.rejects(
+    () => store.release(
+      acquired.lease.leaseId,
+      acquired.authorization.leaseToken,
+      { outcome: 'pass' }
+    ),
+    (error) =>
+      error instanceof ResourceLeaseError &&
+      error.code === 'INVALID_LEASE_RELEASE_PROOF'
+  );
+  await assert.rejects(
+    () => store.release(
+      acquired.lease.leaseId,
+      acquired.authorization.leaseToken,
+      forgedProof
+    ),
+    (error) =>
+      error instanceof ResourceLeaseError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_NOT_FOUND'
+  );
+
+  const { proof } = await commitCompletionProof(
+    root,
+    graph,
+    acquired.authorization
   );
 
   const first = await store.release(
     acquired.lease.leaseId,
     acquired.authorization.leaseToken,
-    { outcome: 'pass', patchHash: 'a'.repeat(64) }
+    proof
   );
   const replay = await store.release(
     acquired.lease.leaseId,
     acquired.authorization.leaseToken,
-    { outcome: 'pass', patchHash: 'a'.repeat(64) }
+    proof
   );
   assert.equal(first.status, 'released');
   assert.equal(replay.status, 'replayed');
+  assert.deepEqual(first.lease.releaseResult, proof);
 
   await assert.rejects(
     () => store.release(
       acquired.lease.leaseId,
       acquired.authorization.leaseToken,
-      { outcome: 'fail' }
+      {
+        ...proof,
+        transitionFingerprint: 'b'.repeat(64),
+      }
     ),
     (error) => error instanceof ResourceLeaseError && error.code === 'LEASE_RELEASE_FENCED'
   );
@@ -255,6 +342,45 @@ test('release is token-bound idempotent and a released attempt cannot execute ag
   await assert.rejects(
     () => store.acquire(graph, 'A'),
     (error) => error instanceof ResourceLeaseError && error.code === 'LEASE_ALREADY_RELEASED'
+  );
+});
+
+test('released lease fails closed if its durable terminal ledger is corrupted or removed', async () => {
+  const root = await tempProject();
+  const graph = graphFor([{
+    id: 'A',
+    owner: 'implementer',
+    depends_on: [],
+    files_modified: ['src/a.js'],
+  }], 'run-release-ledger-integrity');
+  const store = new ResourceLeaseStore(root, graph.runId);
+  const acquired = await store.acquire(graph, 'A', 'attempt-ledger');
+  const { runStore, proof } = await commitCompletionProof(
+    root,
+    graph,
+    acquired.authorization
+  );
+
+  await store.release(
+    acquired.lease.leaseId,
+    acquired.authorization.leaseToken,
+    proof
+  );
+
+  await fs.writeFile(runStore.transitionsPath, '{"broken":\n', 'utf8');
+  await assert.rejects(
+    () => new ResourceLeaseStore(root, graph.runId).list(),
+    (error) =>
+      error instanceof ResourceLeaseError &&
+      error.code === 'LEASE_RELEASE_LEDGER_CORRUPT'
+  );
+
+  await fs.rm(runStore.transitionsPath, { force: true });
+  await assert.rejects(
+    () => new ResourceLeaseStore(root, graph.runId).list(),
+    (error) =>
+      error instanceof ResourceLeaseError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_NOT_FOUND'
   );
 });
 
@@ -276,10 +402,15 @@ test('tampered or released dispatch authorization fails closed', async () => {
     (error) => error instanceof ResourceLeaseError && error.code === 'DISPATCH_AUTH_TAMPERED'
   );
 
+  const { proof } = await commitCompletionProof(
+    root,
+    graph,
+    acquired.authorization
+  );
   await store.release(
     acquired.lease.leaseId,
     acquired.authorization.leaseToken,
-    { outcome: 'pass' }
+    proof
   );
   await assert.rejects(
     () => store.assertAuthorization(graph, acquired.authorization),

@@ -93,12 +93,37 @@ test('workspace-guard CLI enforces begin -> observed completion -> lease release
   );
   assert.equal(inactive.active, false);
 
-  const released = await leaseStore.release(
-    acquired.authorization.leaseId,
-    acquired.authorization.leaseToken,
-    { outcome: 'completed-after-workspace-guard' }
+  const terminal = await runStore.commitTransition({
+    transitionId: 'complete-A-attempt-1',
+    graphRevision: graph.revisionId,
+    nodeId: 'A',
+    attemptId: 'attempt-1',
+    kind: 'task_completed',
+    effectPolicy: acquired.authorization.effectPolicy,
+    request: {
+      descriptorHash: graph.descriptorHash,
+      leaseId: acquired.authorization.leaseId,
+    },
+    evidenceRefs: ['workspace-guard:' + completed.result.guardId],
+    result: {
+      outcome: 'pass',
+      finalSnapshotHash: completed.result.finalSnapshotHash,
+    },
+  });
+
+  const released = await runCli(
+    [
+      'lease',
+      'release',
+      runId,
+      authPath,
+      terminal.record.transitionId,
+      project,
+    ],
+    project
   );
   assert.equal(released.status, 'released');
+  assert.equal(released.proof.transitionKind, 'task_completed');
 });
 
 test('workspace-guard CLI leaves a violation active until outside writes are reconciled', async () => {

@@ -5,7 +5,10 @@ import {
   requestLeaseExtension,
   validateSealedExecutionGraph,
 } from '../execution-graph/index.mjs';
-import { ResourceLeaseStore } from '../leases/index.mjs';
+import {
+  LEASE_RELEASE_PROOF_SCHEMA,
+  ResourceLeaseStore,
+} from '../leases/index.mjs';
 
 export const TRANSITION_SCHEMA = 'hybrid-transition/v1';
 
@@ -194,6 +197,147 @@ export class ExecutionRunStore {
 
       throw error;
     }
+  }
+
+  async releaseTaskLease(authorization, transitionId) {
+    if (!authorization || typeof authorization !== 'object' || Array.isArray(authorization)) {
+      throw new TransitionError(
+        'dispatch authorization is required for evidence-bound lease release',
+        'LEASE_RELEASE_AUTHORIZATION_REQUIRED'
+      );
+    }
+    const id = safeSegment(transitionId, 'transitionId');
+    const graph = await this.loadGraphRevision(authorization.descriptorHash);
+    const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+    await leaseStore.assertAuthorization(graph, authorization, { allowReleased: true });
+
+    const transitions = await this.loadTransitions();
+    const transition = transitions.find((item) => item.transitionId === id);
+    if (!transition) {
+      throw new TransitionError(
+        'lease release transition is not present in the durable transition ledger',
+        'LEASE_RELEASE_TRANSITION_NOT_FOUND',
+        { transitionId: id }
+      );
+    }
+
+    validateTransitionForLeaseRelease(transition, authorization);
+    const proof = buildLeaseReleaseProof(authorization, transition);
+    const released = await leaseStore.release(
+      authorization.leaseId,
+      authorization.leaseToken,
+      proof
+    );
+
+    return {
+      ...released,
+      proof,
+      transition: structuredClone(transition),
+    };
+  }
+
+  async abortTaskLease(authorization, input = {}) {
+    if (!authorization || typeof authorization !== 'object' || Array.isArray(authorization)) {
+      throw new TransitionError(
+        'dispatch authorization is required for reconciled abort',
+        'LEASE_RELEASE_AUTHORIZATION_REQUIRED'
+      );
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new TransitionError(
+        'reconciled abort input must be an object',
+        'INVALID_RECONCILED_ABORT'
+      );
+    }
+
+    const reasonCode = safeSegment(input.reasonCode, 'reasonCode');
+    const evidenceRefs = normalizeStrings(input.evidenceRefs || []);
+    if (!evidenceRefs.length) {
+      throw new TransitionError(
+        'reconciled abort requires at least one durable evidence reference',
+        'RECONCILED_ABORT_EVIDENCE_REQUIRED'
+      );
+    }
+
+    const graph = await this.loadGraphRevision(authorization.descriptorHash);
+    const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+    await leaseStore.assertAuthorization(graph, authorization, { allowReleased: true });
+
+    const node = graph.nodes.find(
+      (item) => item.id === authorization.taskId && item.kind === 'agent'
+    );
+    if (!node) {
+      throw new TransitionError(
+        'reconciled abort target is not an executable graph node',
+        'UNKNOWN_RECOVERY_NODE',
+        { taskId: authorization.taskId }
+      );
+    }
+
+    const transitionId =
+      'abort-' +
+      safeDigestSegment(authorization.taskId) +
+      '-' +
+      safeDigestSegment(authorization.attemptId) +
+      '-' +
+      authorization.leaseId.slice(-12);
+
+    const leaseSnapshot = (await leaseStore.list()).leases.find(
+      (item) => item.leaseId === authorization.leaseId
+    );
+    if (leaseSnapshot?.status === 'released') {
+      const priorProof = leaseSnapshot.releaseResult;
+      if (
+        priorProof?.transitionKind !== 'task_aborted_reconciled' ||
+        priorProof?.transitionId !== transitionId
+      ) {
+        throw new TransitionError(
+          'released task attempt already has a different terminal outcome',
+          'LEASE_TERMINAL_OUTCOME_FENCED',
+          {
+            leaseId: authorization.leaseId,
+            priorTransitionId: priorProof?.transitionId ?? null,
+            priorTransitionKind: priorProof?.transitionKind ?? null,
+            attemptedTransitionId: transitionId,
+            attemptedTransitionKind: 'task_aborted_reconciled',
+          }
+        );
+      }
+    }
+
+    const committed = await this.commitTransition({
+      transitionId,
+      graphRevision: authorization.graphRevision,
+      nodeId: authorization.taskId,
+      attemptId: authorization.attemptId,
+      kind: 'task_aborted_reconciled',
+      effectPolicy: authorization.effectPolicy ?? node.effectPolicy ?? null,
+      request: {
+        descriptorHash: authorization.descriptorHash,
+        leaseId: authorization.leaseId,
+        reasonCode,
+      },
+      evidenceRefs,
+      result: {
+        outcome: 'aborted-reconciled',
+        reasonCode,
+        ...(input.result !== undefined
+          ? { details: boundedValue(input.result) }
+          : {}),
+      },
+    });
+
+    const released = await this.releaseTaskLease(
+      authorization,
+      committed.record.transitionId
+    );
+    return {
+      status: released.status === 'released' ? 'aborted-released' : 'replayed',
+      transition: committed.record,
+      proof: released.proof,
+      lease: released.lease,
+      path: released.path,
+    };
   }
 
   async loadGraphRevision(descriptorHash) {
@@ -430,6 +574,78 @@ export function buildTransitionRecord(runId, input = {}) {
   };
   validateTransitionRecord(record, record.runId);
   return record;
+}
+
+export function buildLeaseReleaseProof(authorization, transition) {
+  validateTransitionForLeaseRelease(transition, authorization);
+  return {
+    schema: LEASE_RELEASE_PROOF_SCHEMA,
+    source: 'transition',
+    transitionId: transition.transitionId,
+    transitionKind: transition.kind,
+    transitionFingerprint: createHash('sha256')
+      .update(canonical(transition))
+      .digest('hex'),
+    runId: authorization.runId,
+    descriptorHash: authorization.descriptorHash,
+    graphRevision: authorization.graphRevision,
+    taskId: authorization.taskId,
+    attemptId: authorization.attemptId,
+    leaseId: authorization.leaseId,
+    outcome:
+      transition.kind === 'task_aborted_reconciled'
+        ? 'aborted-reconciled'
+        : 'completed',
+  };
+}
+
+function validateTransitionForLeaseRelease(transition, authorization) {
+  validateTransitionRecord(transition, authorization.runId);
+  const errors = [];
+
+  if (
+    !['task_completed', 'recovered_task_completed', 'task_aborted_reconciled']
+      .includes(transition.kind)
+  ) {
+    errors.push('transition kind is not terminal for lease release');
+  }
+  if (transition.graphRevision !== authorization.graphRevision) {
+    errors.push('graphRevision mismatch');
+  }
+  if (transition.nodeId !== authorization.taskId) {
+    errors.push('task mismatch');
+  }
+  if (transition.attemptId !== authorization.attemptId) {
+    errors.push('attempt mismatch');
+  }
+  if (
+    transition.effectPolicy != null &&
+    authorization.effectPolicy != null &&
+    transition.effectPolicy !== authorization.effectPolicy
+  ) {
+    errors.push('effectPolicy mismatch');
+  }
+  if (!Array.isArray(transition.evidenceRefs) || !transition.evidenceRefs.length) {
+    errors.push('terminal transition has no evidence');
+  }
+  if (
+    transition.kind === 'task_aborted_reconciled' &&
+    transition.result?.outcome !== 'aborted-reconciled'
+  ) {
+    errors.push('reconciled abort outcome mismatch');
+  }
+
+  if (errors.length) {
+    throw new TransitionError(
+      'transition cannot authorize lease release: ' + errors.join('; '),
+      'LEASE_RELEASE_TRANSITION_INVALID',
+      {
+        transitionId: transition.transitionId,
+        errors,
+      }
+    );
+  }
+  return true;
 }
 
 export function transitionRequestFingerprint(value) {

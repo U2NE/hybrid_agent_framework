@@ -63,6 +63,12 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /drain-required/);
   assert.match(leaseDoc, /new attempt/i);
   assert.match(leaseDoc, /never has its dispatch authorization or sealed task contract mutated in place/i);
+  assert.match(leaseDoc, /Evidence-bound release and recovery/i);
+  assert.match(leaseDoc, /hybrid-lease-release-proof\/v1/);
+  assert.match(leaseDoc, /task_aborted_reconciled/);
+  assert.match(leaseDoc, /Raw token-only/i);
+  assert.match(leaseDoc, /independently re-reads `TRANSITIONS\.jsonl`/i);
+  assert.match(leaseDoc, /missing or corrupted terminal evidence fails closed/i);
 
   for (const alias of ['.agents/skills/plan/SKILL.md', '.codex/skills/plan/SKILL.md']) {
     const stat = await fs.lstat(path.join(root, alias));
@@ -93,7 +99,13 @@ test('current-workspace mutation guard documentation matches the enforced owners
   assert.match(guardDoc, /WRITE_SET_VIOLATION/);
   assert.match(guardDoc, /WORKSPACE_BASE_MOVED/);
   assert.match(guardDoc, /repository-global/i);
+  assert.match(guardDoc, /Guard completion is necessary but is not itself lease-release authority/);
+  assert.match(guardDoc, /task_completed/);
+  assert.match(guardDoc, /task_aborted_reconciled/);
+  assert.match(guardDoc, /evidence-bound lease release/i);
   assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
   assert.match(executeSkill, /current-workspace mutation guard/);
+  assert.match(executeSkill, /Guard completion alone is not release authority/);
+  assert.match(executeSkill, /hybrid lease abort/);
   assert.match(guardCore, /WORKSPACE_GUARD_RECONCILIATION_REQUIRED/);
 });

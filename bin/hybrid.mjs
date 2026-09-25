@@ -67,13 +67,23 @@ try {
         const input = await readJsonFile(inputPath);
         print(await new ExecutionRunStore(root, runId).extendTaskResources(input));
       } else if (sub === 'release') {
-        const leaseId = required(args[2], 'lease id');
-        const leaseToken = required(args[3], 'lease token');
+        const authorizationPath = required(args[2], 'authorization JSON path');
+        const transitionId = required(args[3], 'terminal transition id');
         const root = path.resolve(args[4] || '.');
-        print(await new ResourceLeaseStore(root, runId).release(
-          leaseId,
-          leaseToken,
-          null
+        const authorization = await readJsonFile(authorizationPath);
+        print(await new ExecutionRunStore(root, runId).releaseTaskLease(
+          authorization,
+          transitionId
+        ));
+      } else if (sub === 'abort') {
+        const authorizationPath = required(args[2], 'authorization JSON path');
+        const abortInputPath = required(args[3], 'reconciled abort JSON path');
+        const root = path.resolve(args[4] || '.');
+        const authorization = await readJsonFile(authorizationPath);
+        const abortInput = await readJsonFile(abortInputPath);
+        print(await new ExecutionRunStore(root, runId).abortTaskLease(
+          authorization,
+          abortInput
         ));
       } else if (sub === 'list') {
         const root = path.resolve(args[2] || '.');
@@ -88,7 +98,7 @@ try {
         print({ valid: true, leaseId: authorization.leaseId });
       } else {
         throw new Error(
-          'usage: hybrid lease <acquire|extend|release|list|verify> <run-id> ...'
+          'usage: hybrid lease <acquire|extend|release|abort|list|verify> <run-id> ...'
         );
       }
       break;
@@ -297,7 +307,8 @@ function help() {
     '  hybrid lease acquire <run-id> <task-id> <attempt-id> [project-root]',
     '  hybrid lease extend <run-id> <extension.json> [project-root]',
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',
-    '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
+    '  hybrid lease release <run-id> <authorization.json> <terminal-transition-id> [project-root]',
+    '  hybrid lease abort <run-id> <authorization.json> <abort.json> [project-root]',
     '  hybrid lease list <run-id> [project-root]',
     '  hybrid workspace-guard begin <run-id> <authorization.json> [project-root]',
     '  hybrid workspace-guard complete <run-id> <authorization.json> [project-root]',

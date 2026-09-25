@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import { ResourceLeaseStore } from '../../core/leases/index.mjs';
+import { ExecutionRunStore } from '../../core/transitions/index.mjs';
 import {
   WorkspaceGuardError,
   beginCurrentWorkspaceGuard,
@@ -403,7 +404,9 @@ test('tampered or inactive dispatch authorization cannot control a workspace gua
     depends_on: [],
     files_modified: ['src/a.js'],
   }]);
+  const runStore = new ExecutionRunStore(root, graph.runId);
   const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
   const acquired = await leaseStore.acquire(graph, 'A', 'attempt-1');
 
   const tampered = {
@@ -419,11 +422,10 @@ test('tampered or inactive dispatch authorization cannot control a workspace gua
     (error) => /dispatch authorization/i.test(error.message)
   );
 
-  await leaseStore.release(
-    acquired.authorization.leaseId,
-    acquired.authorization.leaseToken,
-    { outcome: 'cancelled' }
-  );
+  await runStore.abortTaskLease(acquired.authorization, {
+    reasonCode: 'TEST_CANCELLATION',
+    evidenceRefs: ['reconcile:workspace-guard-auth-test'],
+  });
   await assert.rejects(
     () => beginCurrentWorkspaceGuard({
       projectRoot: root,

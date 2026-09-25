@@ -115,11 +115,10 @@ test('graph advancement is fenced by active dispatch leases and succeeds after r
   const replay = await runStore.advanceGraph(graph);
   assert.equal(replay.status, 'replayed');
 
-  await leaseStore.release(
-    acquired.authorization.leaseId,
-    acquired.authorization.leaseToken,
-    { outcome: 'aborted-before-revision' }
-  );
+  await runStore.abortTaskLease(acquired.authorization, {
+    reasonCode: 'GRAPH_REVISION_REQUIRED',
+    evidenceRefs: ['reconcile:test-aborted-before-revision'],
+  });
   const advanced = await runStore.advanceGraph(amendedResult.graph);
   assert.equal(advanced.status, 'advanced');
   assert.equal(
@@ -186,11 +185,10 @@ test('runtime lease extension drains active old-revision leases before publishin
     graph.descriptorHash
   );
 
-  await leaseStore.release(
-    active.authorization.leaseId,
-    active.authorization.leaseToken,
-    { outcome: 'aborted-and-reconciled-before-resource-extension' }
-  );
+  await runStore.abortTaskLease(active.authorization, {
+    reasonCode: 'RESOURCE_EXTENSION_REQUIRED',
+    evidenceRefs: ['reconcile:test-resource-extension'],
+  });
 
   const extended = await runStore.extendTaskResources({
     taskId: 'task-a',
@@ -386,17 +384,248 @@ test('approved material child cannot publish across an active parent lease', asy
   );
   assert.equal((await runStore.loadGraph()).descriptorHash, parent.descriptorHash);
 
-  await leaseStore.release(
-    lease.authorization.leaseId,
-    lease.authorization.leaseToken,
-    { outcome: 'reconciled-before-material-revision' }
-  );
+  await runStore.abortTaskLease(lease.authorization, {
+    reasonCode: 'MATERIAL_REVISION_REQUIRED',
+    evidenceRefs: ['reconcile:test-material-revision'],
+  });
   const advanced = await runStore.advanceGraph(child);
   assert.equal(advanced.status, 'advanced');
   assert.equal((await runStore.loadGraph()).descriptorHash, child.descriptorHash);
   assert.equal(
     (await runStore.loadGraphRevision(parent.descriptorHash)).descriptorHash,
     parent.descriptorHash
+  );
+});
+
+test('lease release requires a durable terminal transition with evidence and replays idempotently', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(graph, 'task-a', 'attempt-release');
+
+  await assert.rejects(
+    () => runStore.releaseTaskLease(
+      acquired.authorization,
+      'complete-task-a-attempt-release'
+    ),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_NOT_FOUND'
+  );
+  assert.equal((await leaseStore.list({ activeOnly: true })).leases.length, 1);
+
+  const nonTerminal = await runStore.commitTransition({
+    transitionId: 'dispatch-task-a-attempt-release',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-release',
+    kind: 'task_dispatched',
+    effectPolicy: 'reconcile_required',
+    request: { descriptorHash: graph.descriptorHash },
+    evidenceRefs: ['dispatch:test'],
+  });
+  await assert.rejects(
+    () => runStore.releaseTaskLease(
+      acquired.authorization,
+      nonTerminal.record.transitionId
+    ),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
+      error.details.errors.some((item) => /not terminal/.test(item))
+  );
+
+  const noEvidence = await runStore.commitTransition({
+    transitionId: 'complete-task-a-no-evidence',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-release',
+    kind: 'task_completed',
+    effectPolicy: 'reconcile_required',
+    request: { descriptorHash: graph.descriptorHash },
+    evidenceRefs: [],
+  });
+  await assert.rejects(
+    () => runStore.releaseTaskLease(
+      acquired.authorization,
+      noEvidence.record.transitionId
+    ),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
+      error.details.errors.includes('terminal transition has no evidence')
+  );
+
+  const completed = await runStore.commitTransition({
+    transitionId: 'complete-task-a-attempt-release',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-release',
+    kind: 'task_completed',
+    effectPolicy: 'reconcile_required',
+    request: { descriptorHash: graph.descriptorHash },
+    evidenceRefs: ['test:acceptance-pass', 'file:src/a.js'],
+    result: { outcome: 'pass' },
+  });
+
+  const first = await runStore.releaseTaskLease(
+    acquired.authorization,
+    completed.record.transitionId
+  );
+  const replay = await new ExecutionRunStore(root, graph.runId).releaseTaskLease(
+    acquired.authorization,
+    completed.record.transitionId
+  );
+
+  assert.equal(first.status, 'released');
+  assert.equal(replay.status, 'replayed');
+  assert.equal(first.proof.schema, 'hybrid-lease-release-proof/v1');
+  assert.equal(first.proof.transitionKind, 'task_completed');
+  assert.equal(first.proof.outcome, 'completed');
+  assert.equal(first.proof.leaseId, acquired.authorization.leaseId);
+  assert.equal(first.proof.descriptorHash, graph.descriptorHash);
+  assert.equal(first.proof.transitionFingerprint.length, 64);
+  assert.equal((await leaseStore.list({ activeOnly: true })).leases.length, 0);
+});
+
+test('lease release transition is fenced to the exact task attempt and effect policy', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(graph, 'task-a', 'attempt-bound');
+
+  const wrongAttempt = await runStore.commitTransition({
+    transitionId: 'complete-wrong-attempt',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'other-attempt',
+    kind: 'task_completed',
+    effectPolicy: 'reconcile_required',
+    evidenceRefs: ['test:wrong-attempt'],
+  });
+  await assert.rejects(
+    () => runStore.releaseTaskLease(
+      acquired.authorization,
+      wrongAttempt.record.transitionId
+    ),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
+      error.details.errors.includes('attempt mismatch')
+  );
+
+  const wrongPolicy = await runStore.commitTransition({
+    transitionId: 'complete-wrong-policy',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-bound',
+    kind: 'task_completed',
+    effectPolicy: 'at_most_once',
+    evidenceRefs: ['test:wrong-policy'],
+  });
+  await assert.rejects(
+    () => runStore.releaseTaskLease(
+      acquired.authorization,
+      wrongPolicy.record.transitionId
+    ),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
+      error.details.errors.includes('effectPolicy mismatch')
+  );
+
+  assert.equal((await leaseStore.list({ activeOnly: true })).leases.length, 1);
+});
+
+test('reconciled abort commits durable evidence before releasing and replays exactly', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(graph, 'task-a', 'attempt-abort');
+
+  await assert.rejects(
+    () => runStore.abortTaskLease(acquired.authorization, {
+      reasonCode: 'RESOURCE_EXTENSION_REQUIRED',
+      evidenceRefs: [],
+    }),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'RECONCILED_ABORT_EVIDENCE_REQUIRED'
+  );
+
+  const first = await runStore.abortTaskLease(acquired.authorization, {
+    reasonCode: 'RESOURCE_EXTENSION_REQUIRED',
+    evidenceRefs: ['workspace-guard:reconciled'],
+    result: { changedFiles: [] },
+  });
+  const replay = await new ExecutionRunStore(root, graph.runId).abortTaskLease(
+    acquired.authorization,
+    {
+      reasonCode: 'RESOURCE_EXTENSION_REQUIRED',
+      evidenceRefs: ['workspace-guard:reconciled'],
+      result: { changedFiles: [] },
+    }
+  );
+
+  assert.equal(first.status, 'aborted-released');
+  assert.equal(replay.status, 'replayed');
+  assert.equal(first.transition.kind, 'task_aborted_reconciled');
+  assert.equal(first.transition.result.outcome, 'aborted-reconciled');
+  assert.deepEqual(first.transition.evidenceRefs, ['workspace-guard:reconciled']);
+  assert.equal(first.proof.outcome, 'aborted-reconciled');
+  assert.equal((await leaseStore.list({ activeOnly: true })).leases.length, 0);
+});
+
+test('completed lease cannot later append a contradictory reconciled abort transition', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(graph, 'task-a', 'attempt-terminal');
+
+  const completed = await runStore.commitTransition({
+    transitionId: 'complete-task-a-attempt-terminal',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-terminal',
+    kind: 'task_completed',
+    effectPolicy: 'reconcile_required',
+    request: {
+      descriptorHash: graph.descriptorHash,
+      leaseId: acquired.authorization.leaseId,
+    },
+    evidenceRefs: ['test:terminal-completion'],
+    result: { outcome: 'pass' },
+  });
+  await runStore.releaseTaskLease(
+    acquired.authorization,
+    completed.record.transitionId
+  );
+
+  const before = await runStore.loadTransitions();
+  await assert.rejects(
+    () => runStore.abortTaskLease(acquired.authorization, {
+      reasonCode: 'LATE_ABORT_SHOULD_NOT_APPEND',
+      evidenceRefs: ['reconcile:late-abort'],
+    }),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'LEASE_TERMINAL_OUTCOME_FENCED' &&
+      error.details.priorTransitionKind === 'task_completed'
+  );
+  const after = await runStore.loadTransitions();
+
+  assert.equal(after.length, before.length);
+  assert.equal(
+    after.some((record) => record.kind === 'task_aborted_reconciled'),
+    false
   );
 });
 
