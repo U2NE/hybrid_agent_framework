@@ -111,6 +111,41 @@ test('capability grant tampering fails sealed graph validation even after rehash
   );
 });
 
+test('design executor seals only with an exclusive UI resource lease', () => {
+  const graph = sealExecutionPlan({
+    tasks: [{
+      id: 'design-checkout',
+      owner: 'design-executor',
+      files_modified: ['src/components/Checkout.tsx'],
+      resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+      depends_on: [],
+    }],
+  }, {
+    runId: 'run-design',
+    approvalScopeHash: 'approval-hash',
+  });
+
+  const node = graph.nodes.find((item) => item.id === 'design-checkout');
+  assert.equal(node.capabilityGrant.writeScope, 'leased-ui');
+  assert.ok(node.capabilityGrant.capabilities.includes('ui.implement'));
+  assert.equal(validateSealedExecutionGraph(graph), true);
+
+  assert.throws(
+    () => sealExecutionPlan({
+      tasks: [{
+        id: 'design-without-lease',
+        owner: 'design-executor',
+        files_modified: ['src/components/Checkout.tsx'],
+        depends_on: [],
+      }],
+    }, {
+      runId: 'run-design-no-lease',
+      approvalScopeHash: 'approval-hash',
+    }),
+    (error) => error?.code === 'UI_LEASE_REQUIRED'
+  );
+});
+
 test('execution sealing fails closed without an approval scope', () => {
   assert.throws(
     () => sealExecutionPlan(plan, { runId: 'run-1' }),

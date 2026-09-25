@@ -161,6 +161,7 @@ export function validateSealedExecutionGraph(graph) {
           owner: node.role,
           files_modified: node.filesModified || [],
           writes: node.writes || [],
+          resources: node.resources || [],
           requested_capabilities: node.capabilityGrant?.capabilities || [],
         });
         const expectedGrant = {

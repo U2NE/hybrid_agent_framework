@@ -198,6 +198,27 @@ function baseRouteFor(role, context, policy, reasons) {
     context.criticalSecurityJudgment === true ||
     context.unresolvedSecurityRisk === true;
 
+  if (role === 'design-architect') {
+    if (context.highDesignComplexity === true || highAmbiguity) {
+      return profile('hard', 'high-complexity-design-architecture');
+    }
+    return profile('moderate', 'design-architecture');
+  }
+
+  if (role === 'design-executor') {
+    if (context.highDesignComplexity === true) {
+      return profile('hard', 'high-complexity-design-execution');
+    }
+    return profile('moderate', 'design-execution');
+  }
+
+  if (role === 'design-reviewer') {
+    if (context.highDesignComplexity === true || difficultReview) {
+      return profile('hard', 'high-complexity-design-review');
+    }
+    return profile('moderate', 'design-review');
+  }
+
   if (role === 'security-reviewer') {
     if (criticalSecurity) return profile('very_hard', 'critical-security-needs-luna-max');
     if (complexSecurity) return profile('very_hard', 'complex-security-needs-luna-max');

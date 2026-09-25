@@ -25,12 +25,15 @@ test('Codex config registers roles, enables sibling capacity, and leaves model d
   assert.doesNotMatch(config, /^default_subagent_model\s*=/m);
   assert.match(config, /^\[agents\."scout"\]$/m);
   assert.match(config, /^config_file = "agents\/scout\.toml"$/m);
+  assert.match(config, /^\[agents\."design-architect"\]$/m);
+  assert.match(config, /^\[agents\."design-executor"\]$/m);
+  assert.match(config, /^\[agents\."design-reviewer"\]$/m);
 });
 
 test('standalone role config layers carry identity, inherit routed model, and forbid recursive delegation', async () => {
   const dir = path.join(root, '.codex', 'agents');
   const entries = (await fs.readdir(dir)).filter((name) => name.endsWith('.toml'));
-  assert.equal(entries.length, 11);
+  assert.equal(entries.length, 14);
 
   for (const entry of entries) {
     const role = entry.replace(/\.toml$/, '');

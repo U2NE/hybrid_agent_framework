@@ -7,12 +7,16 @@ import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
 import { assessSecurityReview } from '../verification/index.mjs';
 import { sealExecutionPlan } from '../execution-graph/index.mjs';
 import { ExecutionRunStore } from '../transitions/index.mjs';
+import { assessDesignWork } from '../design/index.mjs';
 
 const ROUTABLE_STAGES = new Set([
   'scout',
   'requirements-gate',
   'researcher',
   'planner',
+  'design-architect',
+  'design-executor',
+  'design-reviewer',
   'architect',
   'plan-auditor',
   'implementer',
@@ -32,9 +36,11 @@ export function derivePipeline({
   const stages = [];
 
   if (tier === TaskTier.TRIVIAL) {
-    stages.push('implementer');
+    if (needs.designArchitect) stages.push('design-architect');
+    stages.push(...needs.implementationRoles);
     if (needs.tester) stages.push('tester');
     else stages.push('lightweight-verify');
+    if (needs.designReviewer) stages.push('design-reviewer');
     if (securityReview) stages.push('security-reviewer');
     if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
     return stages;
@@ -43,11 +49,13 @@ export function derivePipeline({
   if (tier === TaskTier.BOUNDED) {
     if (needs.scout) stages.push('scout');
     if (needs.research) stages.push('researcher');
+    if (needs.designArchitect) stages.push('design-architect');
     if (needs.planning) stages.push('planner');
     if (needs.scheduler) stages.push('scheduler');
-    stages.push('implementer');
+    stages.push(...needs.implementationRoles);
     if (needs.tester) stages.push('tester');
     if (needs.review) stages.push('code-reviewer');
+    if (needs.designReviewer) stages.push('design-reviewer');
     if (securityReview) stages.push('security-reviewer');
     stages.push('verifier');
     if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
@@ -66,13 +74,15 @@ export function derivePipeline({
   }
 
   if (needs.research) stages.push('researcher');
+  if (needs.designArchitect) stages.push('design-architect');
   stages.push('planner');
 
   if (tier === TaskTier.AMBIGUOUS || needs.council) {
     stages.push('architect', 'plan-auditor');
   }
 
-  stages.push('scheduler', 'implementer', 'tester', 'code-reviewer');
+  stages.push('scheduler', ...needs.implementationRoles, 'tester', 'code-reviewer');
+  if (needs.designReviewer) stages.push('design-reviewer');
   if (securityReview) stages.push('security-reviewer');
   stages.push('verifier', 'integrate', 'full-test');
 
@@ -98,6 +108,7 @@ export function prepareExecution(input) {
   });
 
   const securityReview = securityAssessment.required;
+  const designAssessment = assessDesignWork(input);
   const baseWaves = input.tasks ? buildExecutionWaves(input.tasks) : [];
   const isolationPlan = planExecutionIsolation(baseWaves, {
     worktreeAvailable: input.worktreeAvailable,
@@ -109,9 +120,16 @@ export function prepareExecution(input) {
     input,
     classification,
     requirements,
-    securityReview
+    securityReview,
+    designAssessment
   );
-  const needs = derivePipelineNeeds(input, classification, securityReview, routingContext);
+  const needs = derivePipelineNeeds(
+    input,
+    classification,
+    securityReview,
+    routingContext,
+    designAssessment
+  );
   const pipeline = derivePipeline({ classification, securityReview, needs });
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
   const executionGraph =
@@ -133,10 +151,11 @@ export function prepareExecution(input) {
       : null;
 
   return {
-    decisionTrace: executionDecisions(input, { classification, pipeline, isolationPlan, modelRouting, securityAssessment }),
+    decisionTrace: executionDecisions(input, { classification, pipeline, isolationPlan, modelRouting, securityAssessment, designAssessment }),
     classification,
     requirements,
     securityReview,
+    designAssessment,
     needs,
     pipeline,
     waves: isolationPlan.waves,
@@ -205,7 +224,7 @@ export async function prepareExecutionWithProvenance(input = {}, options = {}) {
   };
 }
 
-export function derivePipelineNeeds(input, classification, securityReview, routingContext = {}) {
+export function derivePipelineNeeds(input, classification, securityReview, routingContext = {}, designAssessment = {}) {
   const tier = classification.tier;
   const task = input.task && typeof input.task === 'object' ? input.task : {};
   const tasks = Array.isArray(input.tasks) ? input.tasks : [];
@@ -217,6 +236,8 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
       ? task.acceptance_criteria
       : [];
 
+  const implementationRoles = deriveImplementationRoles(input, designAssessment);
+
   const architectureKnowledge =
     routingContext.architecturalChange === true ||
     input.environmentChanged === true ||
@@ -226,6 +247,9 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
     input.newTestingConvention === true;
 
   return {
+    implementationRoles,
+    designArchitect: designAssessment.required === true,
+    designReviewer: designAssessment.required === true,
     scout:
       input.needsScout === true ||
       tier >= TaskTier.COMPLEX ||
@@ -262,7 +286,24 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
   };
 }
 
-export function deriveRoutingContext(input, classification, requirements, securityReview) {
+function deriveImplementationRoles(input, designAssessment = {}) {
+  const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+  if (!tasks.length) {
+    return [designAssessment.required === true ? 'design-executor' : 'implementer'];
+  }
+
+  const owners = [];
+  for (const task of tasks) {
+    const owner = String(task?.owner || 'implementer').trim() || 'implementer';
+    if (!['implementer', 'design-executor'].includes(owner)) continue;
+    if (!owners.includes(owner)) owners.push(owner);
+  }
+
+  if (!owners.length) return ['implementer'];
+  return owners;
+}
+
+export function deriveRoutingContext(input, classification, requirements, securityReview, designAssessment = {}) {
   const request = String(input.request || input.task?.request || '');
   const task = input.task && typeof input.task === 'object' ? input.task : {};
   const components = Array.isArray(task.components) ? task.components : [];
@@ -282,6 +323,8 @@ export function deriveRoutingContext(input, classification, requirements, securi
       input.largeRefactor === true ||
       /\b(?:large|major|large-scale|cross-module)\s+refactor\b|대규모\s*리팩터/i.test(request),
     securitySensitive: securityReview === true,
+    designRelevant: designAssessment.required === true,
+    highDesignComplexity: designAssessment.visualComplexity === 'high',
     verificationFailures: Number(input.verificationFailures || 0),
     failureEnvelope: input.failureEnvelope || null,
     complexDebugging:
@@ -351,15 +394,34 @@ function executionDecisions(input, prepared) {
   const records = [];
   const base = { runId: input.runId || 'execution', snapshot: input.snapshot ?? null, revision: input.revision ?? 0, attempt: input.attempt ?? 0 };
   const add = data => { const record = buildDecision({ ...base, ...data }); records.push(record); return record; };
-  const { classification, pipeline, isolationPlan, modelRouting, securityAssessment } = prepared;
+  const { classification, pipeline, isolationPlan, modelRouting, securityAssessment, designAssessment } = prepared;
   const tierCode = ['TIER0_TRIVIAL', 'TIER1_BOUNDED', 'TIER2_COMPLEX', 'TIER3_AMBIGUOUS'][classification.tier];
   const root = add({ stage: 'classification', decision: 'classify_tier_' + classification.tier, policy: { rule: 'classification.tier' }, facts: { tier: classification.tier, evidence: classification.evidence }, reasonCodes: [tierCode] });
-  for (const role of ['planner', 'scout', 'researcher', 'implementer', 'tester', 'code-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
-    const stage = ['planner', 'architect', 'plan-auditor'].includes(role) ? 'planning' : ['tester', 'code-reviewer', 'security-reviewer', 'verifier'].includes(role) ? 'review' : 'dispatch';
+  for (const role of ['planner', 'scout', 'researcher', 'design-architect', 'implementer', 'design-executor', 'tester', 'code-reviewer', 'design-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
+    const stage =
+      ['planner', 'architect', 'plan-auditor', 'design-architect'].includes(role)
+        ? 'planning'
+        : ['tester', 'code-reviewer', 'design-reviewer', 'security-reviewer', 'verifier'].includes(role)
+          ? 'review'
+          : 'dispatch';
+    const designRole = ['design-architect', 'design-executor', 'design-reviewer'].includes(role);
     add({ stage, discriminator: role, decision: pipeline.includes(role) ? 'activate' : 'skip',
-      policy: { rule: role === 'security-reviewer' ? 'review.security-activation' : ['architect', 'plan-auditor'].includes(role) ? 'planning.council-required' : 'execution.task-owner' },
-      parentDecisionId: root.decisionId, facts: { targetRole: role, activated: pipeline.includes(role), tier: classification.tier },
-      reasonCodes: role === 'security-reviewer' ? securityAssessment.reasonCodes : [] });
+      policy: {
+        rule: role === 'security-reviewer'
+          ? 'review.security-activation'
+          : designRole
+            ? 'design.conditional-lane'
+            : ['architect', 'plan-auditor'].includes(role)
+              ? 'planning.council-required'
+              : 'execution.task-owner'
+      },
+      parentDecisionId: root.decisionId,
+      facts: { targetRole: role, activated: pipeline.includes(role), tier: classification.tier },
+      reasonCodes: role === 'security-reviewer'
+        ? securityAssessment.reasonCodes
+        : designRole
+          ? (designAssessment?.reasonCodes || [])
+          : [] });
   }
   isolationPlan.waves.forEach((wave, index) => {
     const waveId = 'wave-' + (index + 1);
@@ -371,7 +433,7 @@ function executionDecisions(input, prepared) {
       facts: { ...isolationPlan.isolation[index], conflicts }, intendedAction: { type: parallel ? 'parallel-dispatch' : 'dispatch-wave', waveId, taskIds: wave.map(t => t.id), expectsEvent: false } });
     const isolation = isolationPlan.isolation[index];
     if (isolation.mode === 'worktree') {
-      const riskCodes = { explicit: 'WORKTREE_EXPLICIT', 'low-file-ownership-confidence': 'WORKTREE_LOW_OWNERSHIP_CONFIDENCE', formatter: 'WORKTREE_FORMATTER_RISK', migration: 'WORKTREE_MIGRATION_RISK', lockfile: 'WORKTREE_LOCKFILE_RISK', codegen: 'WORKTREE_GENERATED_FILES_RISK', 'generated-files': 'WORKTREE_GENERATED_FILES_RISK', 'generated-or-migration-path': 'WORKTREE_MIGRATION_RISK' };
+      const riskCodes = { explicit: 'WORKTREE_EXPLICIT', 'parallel-mutators': 'WORKTREE_PARALLEL_MUTATORS', 'low-file-ownership-confidence': 'WORKTREE_LOW_OWNERSHIP_CONFIDENCE', formatter: 'WORKTREE_FORMATTER_RISK', migration: 'WORKTREE_MIGRATION_RISK', lockfile: 'WORKTREE_LOCKFILE_RISK', codegen: 'WORKTREE_GENERATED_FILES_RISK', 'generated-files': 'WORKTREE_GENERATED_FILES_RISK', 'generated-or-migration-path': 'WORKTREE_MIGRATION_RISK' };
       add({ stage: 'scheduling', waveId, parentDecisionId: parent.decisionId, decision: 'use_worktree', policy: { rule: 'execution.worktree-isolation' }, facts: isolation,
         reasonCodes: [...new Set(isolation.reason.split(':').slice(1).join(':').split(',').map(r => riskCodes[r]).filter(Boolean))] });
     }

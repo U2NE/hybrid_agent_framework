@@ -2,6 +2,7 @@ export const ROLE_CAPABILITY_POLICY = Object.freeze({
   scout: readOnlyPolicy(['fs.read', 'code.search']),
   researcher: readOnlyPolicy(['fs.read', 'code.search', 'network.read']),
   planner: readOnlyPolicy(['fs.read', 'code.search', 'planning.return']),
+  'design-architect': readOnlyPolicy(['fs.read', 'code.search', 'ui.inspect', 'design.return']),
   architect: readOnlyPolicy(['fs.read', 'code.search', 'review.return']),
   'plan-auditor': readOnlyPolicy(['fs.read', 'code.search', 'review.return']),
   tester: readOnlyPolicy(['fs.read', 'process.test', 'review.return']),
@@ -19,6 +20,12 @@ export const ROLE_CAPABILITY_POLICY = Object.freeze({
     capabilities: Object.freeze(['fs.read', 'fs.write.leased', 'process.execute']),
     writeScope: 'leased-task',
   }),
+  'design-executor': Object.freeze({
+    sandboxMode: 'workspace-write',
+    capabilities: Object.freeze(['fs.read', 'fs.write.leased', 'process.execute', 'ui.implement']),
+    writeScope: 'leased-ui',
+  }),
+  'design-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'ui.inspect', 'design.return']),
   'knowledge-synthesizer': Object.freeze({
     sandboxMode: 'workspace-write',
     capabilities: Object.freeze(['fs.read', 'fs.write.documentation']),
@@ -106,6 +113,23 @@ export function validateRoleTaskContract(task = {}) {
       'ROLE_WRITE_DENIED',
       { role, writes }
     );
+  }
+
+  if (policy.writeScope === 'leased-ui') {
+    const resources = Array.isArray(task.resources) ? task.resources : [];
+    const uiExclusive = resources.some((resource) => {
+      const item = typeof resource === 'string' ? { key: resource, mode: 'exclusive' } : resource;
+      const key = String(item?.key || '').trim();
+      const mode = String(item?.mode || 'exclusive').trim().toLowerCase();
+      return key.startsWith('ui:') && ['exclusive', 'write'].includes(mode);
+    });
+    if (!uiExclusive) {
+      throw new CapabilityError(
+        'design executor requires an exclusive ui:<surface> resource lease',
+        'UI_LEASE_REQUIRED',
+        { role, resources }
+      );
+    }
   }
 
   if (policy.writeScope === 'durable-documentation') {

@@ -79,6 +79,50 @@ test('shared semantic resources can run together and wildcard exclusive resource
   assert.deepEqual(wildcard.map((wave) => wave.map((task) => task.id)), [['A'], ['B']]);
 });
 
+test('design executor and implementer serialize only when they lease the same UI surface', () => {
+  const sameSurface = buildExecutionWaves([
+    {
+      id: 'design',
+      owner: 'design-executor',
+      depends_on: [],
+      files_modified: ['src/components/Checkout.tsx'],
+      resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+    },
+    {
+      id: 'logic',
+      owner: 'implementer',
+      depends_on: [],
+      files_modified: ['src/hooks/useCheckout.ts'],
+      resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+    },
+  ]);
+  assert.deepEqual(
+    sameSurface.map((wave) => wave.map((task) => task.id)),
+    [['design'], ['logic']]
+  );
+
+  const differentSurfaces = buildExecutionWaves([
+    {
+      id: 'checkout',
+      owner: 'design-executor',
+      depends_on: [],
+      files_modified: ['src/components/Checkout.tsx'],
+      resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+    },
+    {
+      id: 'profile',
+      owner: 'implementer',
+      depends_on: [],
+      files_modified: ['src/components/Profile.tsx'],
+      resources: [{ key: 'ui:profile', mode: 'exclusive' }],
+    },
+  ]);
+  assert.deepEqual(
+    differentSurfaces.map((wave) => wave.map((task) => task.id)),
+    [['checkout', 'profile']]
+  );
+});
+
 test('independent tasks run in parallel', () => {
   const waves = buildExecutionWaves([
     { id: 'A', depends_on: [], files_modified: ['a.js'] },

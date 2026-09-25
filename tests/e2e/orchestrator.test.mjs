@@ -37,6 +37,79 @@ test('Tier 1 bounded default avoids scout planner tester reviewer and knowledge 
   assert.equal(route(result, 'verifier').routeLevel, 'luna_medium');
 });
 
+test('visual UI work activates the isolated design lane without duplicate implementation ownership', () => {
+  const result = prepareExecution({
+    task: {
+      request: 'Redesign checkout layout and responsive spacing',
+      files: ['src/components/Checkout.tsx'],
+    },
+    request: 'Redesign checkout layout and responsive spacing',
+    tasks: [{
+      id: 'checkout-ui',
+      owner: 'design-executor',
+      depends_on: [],
+      files_modified: ['src/components/Checkout.tsx'],
+      resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+    }],
+  });
+
+  assert.equal(result.designAssessment.required, true);
+  assert.ok(result.pipeline.includes('design-architect'));
+  assert.ok(result.pipeline.includes('design-executor'));
+  assert.ok(result.pipeline.includes('design-reviewer'));
+  assert.equal(result.pipeline.includes('implementer'), false);
+  assert.equal(route(result, 'design-architect').routeLevel, 'luna_xhigh');
+  assert.equal(route(result, 'design-executor').routeLevel, 'luna_xhigh');
+  assert.equal(route(result, 'design-reviewer').routeLevel, 'luna_xhigh');
+});
+
+test('mixed design and logic tasks keep distinct owners and may share one parallel worktree wave when UI leases are disjoint', () => {
+  const result = prepareExecution({
+    task: {
+      request: 'Polish checkout visual layout while updating profile logic',
+      files: ['src/components/Checkout.tsx', 'src/profile/service.ts'],
+    },
+    request: 'Polish checkout visual layout while updating profile logic',
+    tasks: [
+      {
+        id: 'checkout-ui',
+        owner: 'design-executor',
+        depends_on: [],
+        files_modified: ['src/components/Checkout.tsx'],
+        resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
+      },
+      {
+        id: 'profile-logic',
+        owner: 'implementer',
+        depends_on: [],
+        files_modified: ['src/profile/service.ts'],
+        resources: [{ key: 'contract:profile', mode: 'exclusive' }],
+      },
+    ],
+  });
+
+  assert.deepEqual(result.needs.implementationRoles, ['design-executor', 'implementer']);
+  assert.ok(result.pipeline.includes('design-executor'));
+  assert.ok(result.pipeline.includes('implementer'));
+  assert.deepEqual(
+    result.waves[0].map((task) => task.id),
+    ['checkout-ui', 'profile-logic']
+  );
+  assert.equal(result.isolationPlan.isolation[0].mode, 'worktree');
+});
+
+test('ordinary backend work leaves every design role inactive', () => {
+  const result = prepareExecution({
+    task: { request: 'Update parser behavior', files: ['src/parser.js'] },
+    request: 'Update parser behavior',
+    tasks: [{ id: 'parser', depends_on: [], files_modified: ['src/parser.js'] }],
+  });
+  assert.equal(result.designAssessment.required, false);
+  for (const stage of ['design-architect', 'design-executor', 'design-reviewer']) {
+    assert.equal(result.pipeline.includes(stage), false);
+  }
+});
+
 test('execution graph is sealed only after explicit execution approval', () => {
   const base = {
     task: { request: 'Update parser behavior', files: ['src/parser.js'] },
