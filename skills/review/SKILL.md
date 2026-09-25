@@ -31,3 +31,5 @@ Rules:
 - If a required browser/runtime provider is unavailable, keep the criterion unverified rather than fabricating evidence.
 - Context cache, proof selection, and passive observability add no agent/model calls.
 - If an explicit model override is rejected/unavailable, retry without model/reasoning override and record session-inheritance fallback.
+- Review bounded decision provenance against actual runtime events and worker artifacts with the deterministic audit. Treat reported attribution as reported; never upgrade it to observed.
+- Keep audit findings passive by default. Review facts, stable policy identifiers, action links, and evidence references; never store hidden reasoning, scratchpads, prompts, conversations, source text, or diffs.

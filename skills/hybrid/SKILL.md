@@ -28,7 +28,10 @@ Use this skill when the user asks to implement, change, fix, refactor, or add a 
 10. `runQualityClosure()` enforces evidence-gated completion: real blocking defects return a targeted packet to the implementation owner for at most three cycles; missing proof becomes a structured proof gap, raw proof is acquired deterministically, the Verifier semantically reassesses the exact evidence ID, and only then can the completion gate PASS. Do not spawn a QE, Evidence Collector, or Repair agent.
 11. Reuse deterministic shared context snapshots only when the same repository/SPEC/PLAN facts would otherwise be reconstructed across workers. Cache miss/corruption/storage failure falls back to normal context construction and never changes correctness.
 12. Passive runtime events are derived best-effort artifacts only; they add no agent/model call and never become canonical state.
-13. Integrate, run full tests, then update durable docs and the derived wiki.
+13. Keep decision provenance passive and structured: the lead owns orchestration decisions and the central decisions log; workers return bounded metadata and can write only their own actor artifact. Workers never write central decisions.
+14. Record observable facts, stable policy identifiers, selected control-flow decisions, intended actions, linked actual actions, and evidence references. Never record chain-of-thought, hidden reasoning, scratchpads, prompts, conversations, source text, or diffs.
+15. Keep the artifacts distinct: runtime events record what happened, decision provenance records why Hybrid selected a control-flow action, actor artifacts record bounded worker activity, and the deterministic audit checks whether decisions and actions agree.
+16. Integrate, run full tests, then update durable docs and the derived wiki.
 
 ## Worker context
 

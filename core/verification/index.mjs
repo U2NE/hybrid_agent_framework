@@ -21,6 +21,21 @@ export const WEAK_SECURITY_TRIGGERS = Object.freeze([
 ]);
 
 export function requiresSecurityReview(change = {}) {
+  return assessSecurityReview(change).required;
+}
+
+export function assessSecurityReview(change = {}) {
+  const text = [change.description || '', ...(change.tags || []), ...(change.files || [])].join(' ');
+  const codes = ['SECURITY_AUTHORIZATION_CHANGE', 'SECURITY_AUTHORIZATION_CHANGE', 'SECURITY_CRYPTOGRAPHY', 'SECURITY_DATABASE_QUERY', 'SECURITY_FILE_UPLOAD', 'SECURITY_PAYMENT', 'SECURITY_SECRET_HANDLING', 'SECURITY_AUTHORIZATION_CHANGE', 'SECURITY_TRUST_BOUNDARY', 'SECURITY_INJECTION', 'SECURITY_INJECTION'];
+  const reasonCodes = STRONG_SECURITY_TRIGGERS.flatMap((pattern, i) => pattern.test(text) ? [codes[i]] : []);
+  if (change.securityRelevant === true) reasonCodes.push('SECURITY_EXPLICIT');
+  if ((change.files || []).some(isStrongSecurityPath)) reasonCodes.push('SECURITY_PATH');
+  const required = securityRequired(change);
+  if (required && !reasonCodes.length) reasonCodes.push('WEAK_SIGNAL_WITH_SECURITY_CONTEXT');
+  return { required, reasonCodes: [...new Set(reasonCodes)], triggers: [...new Set(reasonCodes)].map(code => ({ code })) };
+}
+
+function securityRequired(change = {}) {
   if (change.securityRelevant === true) return true;
 
   const description = String(change.description || '');

@@ -141,6 +141,23 @@ test('generic repair path repairs exactly once on a blocking defect then reruns 
 
   assert.equal(result.pass, true);
   assert.equal(result.snapshot, 'R2');
+  for (const event of result.events.filter(e => ['repair', 'completion'].includes(e.stage))) assert.ok(result.decisionTrace.some(d => d.decisionId === event.decisionId));
+  assert.equal(result.decisionTrace.filter(d => d.decision === 'repair_trigger').length, 1);
+  for (const d of result.decisionTrace.filter(d => d.stage === 'repair')) {
+    assert.equal(d.policy.rule, 'repair.material-finding-only');
+    assert.deepEqual(d.reasonCodes, [d.decision === 'repair_trigger' ? 'ACCEPTANCE_FAILURE' : 'NO_MATERIAL_FINDING']);
+  }
+  const completed = result.decisionTrace.find(d => d.decision === 'complete');
+  assert.equal(completed.stage, 'completion');
+  assert.equal(completed.policy.rule, 'completion.evidence-gate');
+  assert.deepEqual(completed.reasonCodes, ['ALL_AC_VERIFIED']);
+  for (const e of result.events.filter(e => e.decisionId)) {
+    assert.equal(e.actorRole, 'lead');
+    assert.equal(e.role, 'lead');
+    assert.equal(e.attribution, 'observed');
+    assert.equal(e.action, result.decisionTrace.find(d => d.decisionId === e.decisionId).intendedAction.type);
+  }
+  assert.ok(result.decisionTrace.some(d => d.decision === 'repair_skip'));
   assert.deepEqual(calls, { qa: 2, verifier: 1, repair: 1 });
   assert.deepEqual(snapshots, [
     ['qa', 'R1'],
@@ -208,6 +225,13 @@ test('generic proof-gap path acquires raw proof then requires verifier assessmen
   assert.equal(result.pass, true);
   assert.equal(verifierCalls, 2);
   assert.equal(proofCalls, 1);
+  const proofDecision = result.decisionTrace.find(d => d.decision === 'acquire_proof');
+  assert.equal(proofDecision.stage, 'proof');
+  assert.equal(proofDecision.policy.rule, 'proof.cheapest-adequate-proof');
+  assert.deepEqual(proofDecision.reasonCodes, ['PROOF_GAP_CLI']);
+  assert.deepEqual(proofDecision.facts.kinds, ['cli']);
+  assert.equal(proofDecision.facts.reason, 'PROOF_GAP');
+  assert.ok(result.events.filter(e => e.stage === 'proof-acquisition').every(e => e.decisionId === proofDecision.decisionId));
   assert.ok(acquiredId);
   assert.equal(result.evidence[0].assessed, true);
   assert.equal(result.evidence[0].verified, true);

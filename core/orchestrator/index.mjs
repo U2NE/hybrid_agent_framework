@@ -1,9 +1,10 @@
+import { buildDecision } from '../provenance/index.mjs';
 export { runQualityClosure } from './quality-closure.mjs';
 import { classifyTask, TaskTier } from '../classifier/index.mjs';
 import { evaluateRequirements } from '../requirements/index.mjs';
-import { buildExecutionWaves, planExecutionIsolation } from '../scheduler/index.mjs';
+import { buildExecutionWaves, planExecutionIsolation, findFileConflicts } from '../scheduler/index.mjs';
 import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
-import { requiresSecurityReview } from '../verification/index.mjs';
+import { assessSecurityReview } from '../verification/index.mjs';
 
 const ROUTABLE_STAGES = new Set([
   'scout',
@@ -87,13 +88,14 @@ export function prepareExecution(input) {
       })
     : null;
 
-  const securityReview = requiresSecurityReview({
+  const securityAssessment = assessSecurityReview({
     description: input.request || input.task?.request || '',
     files: (input.tasks || []).flatMap((task) => task.files_modified || []),
     tags: input.securityTags || [],
     securityRelevant: input.securityRelevant,
   });
 
+  const securityReview = securityAssessment.required;
   const baseWaves = input.tasks ? buildExecutionWaves(input.tasks) : [];
   const isolationPlan = planExecutionIsolation(baseWaves, {
     worktreeAvailable: input.worktreeAvailable,
@@ -112,6 +114,7 @@ export function prepareExecution(input) {
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
 
   return {
+    decisionTrace: executionDecisions(input, { classification, pipeline, isolationPlan, modelRouting, securityAssessment }),
     classification,
     requirements,
     securityReview,
@@ -266,4 +269,42 @@ export function buildModelRouting(pipeline, context, routingOptions = {}) {
     fallback: MODEL_ROUTING_POLICY.fallback,
     stages,
   };
+}
+
+
+function executionDecisions(input, prepared) {
+  const records = [];
+  const base = { runId: input.runId || 'execution', snapshot: input.snapshot ?? null, revision: input.revision ?? 0, attempt: input.attempt ?? 0 };
+  const add = data => { const record = buildDecision({ ...base, ...data }); records.push(record); return record; };
+  const { classification, pipeline, isolationPlan, modelRouting, securityAssessment } = prepared;
+  const tierCode = ['TIER0_TRIVIAL', 'TIER1_BOUNDED', 'TIER2_COMPLEX', 'TIER3_AMBIGUOUS'][classification.tier];
+  const root = add({ stage: 'classification', decision: 'classify_tier_' + classification.tier, policy: { rule: 'classification.tier' }, facts: { tier: classification.tier, evidence: classification.evidence }, reasonCodes: [tierCode] });
+  if (classification.tier === 0) add({ stage: 'dispatch', decision: 'lead_direct_execution', parentDecisionId: root.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: [tierCode], intendedAction: { type: 'lead-direct', role: 'lead', expectsEvent: false } });
+  for (const role of ['planner', 'scout', 'researcher', 'implementer', 'tester', 'code-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
+    const stage = ['planner', 'architect', 'plan-auditor'].includes(role) ? 'planning' : ['tester', 'code-reviewer', 'security-reviewer', 'verifier'].includes(role) ? 'review' : 'dispatch';
+    add({ stage, discriminator: role, decision: pipeline.includes(role) ? 'activate' : 'skip',
+      policy: { rule: role === 'security-reviewer' ? 'review.security-activation' : ['architect', 'plan-auditor'].includes(role) ? 'planning.council-required' : 'execution.task-owner' },
+      parentDecisionId: root.decisionId, facts: { targetRole: role, activated: pipeline.includes(role), tier: classification.tier },
+      reasonCodes: role === 'security-reviewer' ? securityAssessment.reasonCodes : [] });
+  }
+  isolationPlan.waves.forEach((wave, index) => {
+    const waveId = 'wave-' + (index + 1);
+    const conflicts = findFileConflicts(input.tasks || []).filter(conflict => conflict.tasks.some(id => wave.some(task => task.id === id)));
+    const parallel = wave.length > 1;
+    const parent = add({ stage: 'scheduling', waveId, decision: parallel ? 'parallel_wave' : conflicts.length ? 'serialize_writers' : 'schedule_wave',
+      policy: { rule: parallel ? 'execution.parallel-independent-writers' : conflicts.length ? 'execution.same-file-serialization' : 'execution.task-owner' },
+      reasonCodes: parallel ? ['PARALLEL_DEPENDENCIES_SATISFIED', 'FILE_OWNERSHIP_DISJOINT'] : conflicts.length ? ['SAME_FILE_CONFLICT'] : [],
+      facts: { ...isolationPlan.isolation[index], conflicts }, intendedAction: { type: parallel ? 'parallel-dispatch' : 'dispatch-wave', waveId, taskIds: wave.map(t => t.id), expectsEvent: false } });
+    const isolation = isolationPlan.isolation[index];
+    if (isolation.mode === 'worktree') {
+      const riskCodes = { explicit: 'WORKTREE_EXPLICIT', 'low-file-ownership-confidence': 'WORKTREE_LOW_OWNERSHIP_CONFIDENCE', formatter: 'WORKTREE_FORMATTER_RISK', migration: 'WORKTREE_MIGRATION_RISK', lockfile: 'WORKTREE_LOCKFILE_RISK', codegen: 'WORKTREE_GENERATED_FILES_RISK', 'generated-files': 'WORKTREE_GENERATED_FILES_RISK', 'generated-or-migration-path': 'WORKTREE_MIGRATION_RISK' };
+      add({ stage: 'scheduling', waveId, parentDecisionId: parent.decisionId, decision: 'use_worktree', policy: { rule: 'execution.worktree-isolation' }, facts: isolation,
+        reasonCodes: [...new Set(isolation.reason.split(':').slice(1).join(':').split(',').map(r => riskCodes[r]).filter(Boolean))] });
+    }
+    for (const task of wave) add({ stage: 'dispatch', waveId, taskId: task.id, agentRunId: task.agentRunId, owner: task.owner, files: task.files_modified, decision: 'spawn_' + task.owner, parentDecisionId: parent.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: task.owner === 'implementer' ? ['TASK_OWNER_IMPLEMENTER'] : [], intendedAction: { type: 'spawn', role: task.owner, taskId: task.id }, facts: { dependsOn: task.depends_on } });
+  });
+  for (const route of modelRouting.stages) add({ stage: 'routing', discriminator: route.stage, decision: 'route',
+    policy: { rule: route.escalationReasons?.length || route.fallbackReason ? 'routing.failure-escalation' : 'routing.luna-first' }, facts: { ...route },
+    reasonCodes: [...new Set([...(route.escalationReasons || []).map(reason => /repeat/.test(reason) ? 'REPEATED_FAILURE' : /luna/.test(reason) ? 'LUNA_MAX_EXHAUSTED' : 'ROUTING_ESCALATION'), ...(route.fallbackReason ? ['ROUTING_SESSION_INHERITANCE_FALLBACK'] : [])])] });
+  return records;
 }

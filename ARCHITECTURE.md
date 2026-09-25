@@ -13,6 +13,8 @@
 9. Fix loops stop after three failed verification cycles.
 10. Canonical state is `hybrid-state/v1`; corrupt or unsupported state fails closed.
 11. Luna is the default model tier. Sol is escalation-only and routing is recomputed per stage.
+12. Decision Provenance records bounded observable facts and policy/control-flow choices; it never stores hidden reasoning.
+13. The lead is the sole writer of orchestration decisions and runtime events. Each worker may write only its own bounded actor artifact.
 
 ## Components
 
@@ -29,6 +31,7 @@
 - `repair`: deterministic finding policy, fingerprinting, targeted implementation-owner repair, and the existing bounded fix-loop/routing policy.
 - `qe`: proof-gap-only deterministic process/HTTP/browser-provider adapters; no QE agent.
 - `observability`: best-effort redacted JSONL instrumentation with no model/agent call.
+- `decision provenance`: lead-owned structured decisions linked to actual actions, isolated per-worker artifacts, and a deterministic audit; it is passive and is not a reasoning engine.
 - `wiki`: broken/orphan/stale/oversized lint and knowledge projection.
 - `.codex/agents`: standalone specialized role config.
 - `skills/`: canonical workflow skills, exposed through repository-local aliases.
@@ -116,3 +119,7 @@ Restart reads `AGENTS.md`, `PROJECT.md`, `STATE.md`, the active SPEC/PLAN, and a
 ## Runtime boundary
 
 Deterministic orchestration and Codex config surfaces are verified. Authenticated A/B/C verify spawn, sibling parallelism, same-file serialization, and quality-lane handoff; E verifies the disposable worktree lifecycle; F verifies bounded planning convergence. G and H exercise the framework-source generic `runQualityClosure()` primitive directly: G verifies review → implementation-owner repair → re-review/verifier convergence, while H verifies proof-gap detection → raw CLI proof acquisition → exact-evidence verifier reassessment → completion. Case I closes the remaining installation boundary: an authenticated Lead running inside a disposable project installed by Hybrid followed the installed AGENTS/skill contract, invoked `.hybrid/core/orchestrator/index.mjs` rather than framework source, and emitted artifact-backed `qa` → `verifier` → `completion` events from `runQualityClosure()`. When an explicit integrated snapshot exists, assessed/verified runtime proof now fails closed unless its snapshot exactly matches the current snapshot; unassessed acquired proof is not treated as current verified proof. Explicit model/effort request acceptance is observed, but serving-model identity is not independently attested. Only real user-interactive Case D remains intentionally pending. See `docs/RUNTIME-VALIDATION.md` and `docs/architecture/RUNTIME-SMOKE.md`.
+
+Decision Provenance adds a passive FACTS → POLICY → DECISION → INTENDED ACTION → ACTUAL ACTION → EVIDENCE → AUDIT record. Runtime Event means what actually happened; Decision Provenance means which control-flow policy selected an action; Actor Artifact means what one worker did; Audit means whether those records agree. The lead writes `decisions.jsonl` and orchestration-level `events.jsonl`; each worker API is structurally restricted to `actors/<its-agentRunId>.jsonl`. This is API-level ownership, not an OS sandbox against a hostile process. The bounded `audit.json` is deterministic and does not gate normal execution; it evaluates recorded decisions, actions, ownership declarations, and evidence links, and cannot independently observe unreported filesystem mutations. Canonical decisions expose facts, policy.rule, reasonCodes, intendedAction, and evidenceRefs directly, with a Lead actor and one of the nine canonical control-flow stages. Pure decisions have a null timestamp; the Lead writer stamps persisted records without changing deterministic identity. Attribution distinguishes observed, derived, and reported data; bounded worker self-reports are valid artifacts but cannot by themselves prove an observed action. Metadata-only intended actions explicitly set expectsEvent=false. File mutation records contain bounded paths and attribution, never diffs or source. Sanitization recursively removes secret-bearing and prompt/reasoning/source fields. No layer stores chain-of-thought.
+
+Case J validates this contract through an authenticated installed Lead in a disposable installed project. Authenticated semantic validation now passes from real `decisions.jsonl`, `events.jsonl`, and `audit.json` artifacts: Tier 0 classification, linked Lead file mutation, lightweight verification, and completion all share valid decision/action provenance, and the deterministic audit reports no findings. Exit status and a final response alone remain insufficient. See the runtime smoke documents for its positive and negative criteria.

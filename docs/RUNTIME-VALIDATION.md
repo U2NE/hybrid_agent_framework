@@ -21,6 +21,7 @@ The following are verified against the current repository and Codex 0.156.1:
 - deterministic shared context snapshot/cache invalidation and safe cache-miss fallback outside tracked project state.
 - proof-gap-only process/HTTP/configured-browser acquisition; UI changes alone do not force browser execution.
 - passive redacted JSONL observability with non-fatal storage failure and no agent/LLM call.
+- deterministic Decision Provenance schema, stable decision IDs, recursive sanitizer, role-separated writers, action linkage, actor artifacts, and audit findings. Decision artifacts contain bounded facts and policy/control-flow choices only.
 - conditional security activation and false-positive controls.
 - installer behavior with and without Codex CLI, including target agent/config preservation.
 - wiki lint/query/ingest.
@@ -164,6 +165,14 @@ Authenticated semantic PASS in a real disposable installed project.
 - exit code 0 or a Lead success claim without the installed runtime artifacts cannot PASS.
 
 Case I attests the installed Hybrid contract → installed production primitive → emitted quality lifecycle boundary. It does not attest every future arbitrary Lead behavior or the backend serving-model identity.
+
+### Case J — installed Decision Provenance
+
+Authenticated live semantic validation PASSes in a disposable project installed by the real installer. The real installed Lead produced `decisions.jsonl`, `events.jsonl`, and `audit.json` with `audit.ok === true`, recorded Tier 0 classification and `lead_direct_execution` / `TIER0_TRIVIAL`, linked the actual README mutation to the matching decision ID, and recorded lightweight verification plus completion evidence. An exit-zero process or final response alone is not a pass.
+
+The deterministic validator rejects missing decision/action artifacts, unmatched decision IDs, recorded prompt/hidden-reasoning/raw-source data, fabricated actor attribution, and a completion claim without a runtime completion event. Parallel correctness is covered by deterministic fixtures: sibling completion order may vary; missing expected dispatches, orphan actions, role/file ownership violations, stale snapshots, and unverified attribution are findings. Audit findings are bounded diagnostics and do not fail normal execution.
+
+The four record types remain distinct: Runtime Event = what happened; Decision Provenance = why Hybrid selected that control-flow action; Actor Artifact = what a specific worker did; Audit = whether the recorded decisions and actions agree. None records hidden chain-of-thought. Writer isolation is enforced by API shape: workers receive a writer bound to their own actor artifact, not the central decision writer. This does not claim an OS sandbox against a hostile process. The audit evaluates declared events, ownership, attribution, and evidence linkage; it cannot detect a filesystem mutation that was never reported through the runtime boundary.
 
 ## Still intentionally pending
 

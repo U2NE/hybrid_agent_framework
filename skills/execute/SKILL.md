@@ -25,4 +25,8 @@ If independent QA finds a blocking acceptance defect, return only a targeted rep
 
 Only the lead dispatches siblings. Workers do not spawn or delegate to other workers. The lead owns shared state, lifecycle, result collection, and integration.
 
+The lead is the sole writer of the run's central orchestration decisions and events. Link actual dispatch and integration actions to their decisions when available. Workers return bounded metadata and may write only their own actor artifact through the worker-scoped API; they never append to the central decisions log or write another worker's artifact. Record observable task, wave, ownership, routing, and action metadata only. Never record chain-of-thought, hidden reasoning, prompts, conversation text, source text, or diffs.
+
+Decision provenance explains the selected control-flow action; runtime events record what actually happened; actor artifacts describe bounded worker activity; the deterministic audit checks agreement between decisions and actions.
+
 If the requested explicit model is unavailable/rejected, retry that spawn without model/reasoning override and record the session-inheritance fallback.

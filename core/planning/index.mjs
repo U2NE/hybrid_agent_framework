@@ -1,3 +1,4 @@
+import { buildDecision } from '../provenance/index.mjs';
 import { buildExecutionWaves } from '../scheduler/index.mjs';
 
 const PLAN_OPEN = '<!-- hybrid-plan:v1';
@@ -446,4 +447,9 @@ function hasValue(value) {
   if (hasText(value)) return true;
   if (Array.isArray(value)) return value.length > 0;
   return value != null && typeof value === 'object' && Object.keys(value).length > 0;
+}
+
+export function buildPlanningDecision(input = {}) {
+  if (input.verdict !== 'ITERATE') return null;
+  return buildDecision({ runId: input.runId || 'planning', stage: 'planning', taskId: input.taskId, snapshot: input.snapshot, revision: input.planRevision ?? input.revision, attempt: input.attempt, decision: 'redispatch_planner', policy: { rule: 'planning.planner-only-revision' }, facts: { planRevision: input.planRevision ?? input.revision, architectVerdict: input.architectVerdict, auditorVerdict: input.auditorVerdict }, reasonCodes: ['CONSENSUS_ITERATE', 'PLANNER_ONLY_REVISION'], intendedAction: { type: 'spawn', role: 'planner', ...(input.nextRevision != null ? { nextRevision: input.nextRevision } : {}) } });
 }
