@@ -191,16 +191,17 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
   await exec('git', ['-c', 'user.name=Hybrid', '-c', 'user.email=hybrid@example.invalid', 'commit', '-qm', 'Case K baseline'], { cwd: root });
   const prompt = [
     '$hybrid',
-    'Execute the exact approved Case K fixture in .planning/CASE-K.json and PLAN.md. Do not invent a different preparation input.',
+    'Execute the exact approved Case K fixture in .planning/CASE-K.json and .planning/PLAN.md. Do not invent a different preparation input.',
     'Read AGENTS.md and the Hybrid skill contract, but do not inspect .hybrid/core source unless an installed API call fails.',
     'First call pure prepareExecution() on CASE-K.json and require one parallel wave containing Task A and Task B. Pure inspection must not write provenance.',
-    'Then call prepareExecutionWithProvenance() on that exact same object exactly once. Do not persist trial preparations or replay decisionTrace manually.',
-    'Keep the two returned spawn_implementer decisions as objects. Never transcribe or retype decisionIds.',
+    'Then call prepareExecutionWithProvenance() on that exact same object exactly once. In that SAME Node process use exactly: const children = wired.decisionTrace.filter(d => d.decision === "spawn_implementer" && ["A","B"].includes(d.taskId)); do not look in wired.children, wired.dispatch, wired.decisions, and do not filter by discriminator. Require exactly two children and write those exact objects, unchanged, to .planning/CASE-K-DISPATCH.json. If coordination-file creation itself fails after the wired call, recover the exact persisted objects by using resolveHybridRuntimeRoot(process.cwd()) and reading runs/case-k/decisions.jsonl; do not search only inside the repository. Do not call prepareExecutionWithProvenance() again, do not replay decisionTrace manually, and never transcribe or retype a decisionId.',
+    'Treat .planning/CASE-K-DISPATCH.json as transient Lead coordination state. Whenever a linked action is recorded, parse that file and pass the selected child object itself to createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeActionForDecision(...).',
     'Spawn both sibling Implementers with explicit gpt-6-luna / medium before waiting for either worker. Task A owns only src/a.txt; Task B owns only src/b.txt. The Lead must edit neither file.',
-    'After each successful spawn, record its Lead spawn action using createLeadProvenanceSession().writeActionForDecision(childDecision,{action:"spawn",attribution:"derived"}). Both spawn actions must be persisted before the first completion action.',
-    'Each worker edits only its owned file and writes one reported actor artifact for its own agentRunId after programmatically locating its persisted spawn decision; include taskId, waveId, decisionId, and the exact owned files array. Do not hand-copy a decisionId.',
-    'After workers return, record each completion via writeActionForDecision(childDecision,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
-    'Verify src/a.txt is exactly A1 and src/b.txt is exactly B1, then run auditDecisionTrace over persisted decisions/events/actor artifacts with exact task ownership and persist audit.json.',
+    'Immediately after each successful native spawn, parse the exact matching A/B child object from CASE-K-DISPATCH.json and record its Lead spawn action with writeActionForDecision(child,{action:"spawn",attribution:"derived"}). Both spawn actions must be persisted before the first completion action.',
+    'Each worker edits only its owned file. After editing, the worker must parse CASE-K-DISPATCH.json, select its own child by decision === "spawn_implementer" and its taskId, and use createActorArtifactWriter({runId:"case-k",repoRoot:process.cwd(),agentRunId:child.agentRunId}) to write one reported completion record containing runId, taskId, waveId, agentRunId, decisionId, action:"complete", outcome:"pass", exact owned files, requestedModel:"gpt-6-luna", and requestedReasoningEffort:"medium". Never hand-copy a decisionId.',
+    'After each worker returns, the Lead parses that same exact child object from CASE-K-DISPATCH.json and records completion with writeActionForDecision(child,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
+    'Do not spawn Tester, Code Reviewer, Verifier, or any other role. Case K validates exactly the two sibling Implementers plus deterministic audit.',
+    'Verify src/a.txt is exactly the bytes A1 followed by one trailing LF (A1\\n), and src/b.txt is exactly B1 followed by one trailing LF (B1\\n). The trailing LF is required by the fixture; do not remove it. To audit, compute the run directory with resolveHybridRuntimeRoot(process.cwd()) from .hybrid/core/runtime/index.mjs, read runs/case-k/decisions.jsonl, events.jsonl and actors/*.jsonl, run auditDecisionTrace with exact ownership A->src/a.txt and B->src/b.txt, and persist it with createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeAudit(audit).',
     'Finish only if audit.ok is true and findings is empty. Use runtime run id case-k. Do not modify .hybrid/core. Do not commit.',
   ].join('\n');
   const run = await runCodexExec(bin, [
@@ -227,8 +228,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     audit,
     actualSiblingWorkersObserved: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }) && !hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
     fixtureValid:
-      await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '') === 'A1\n' &&
-      await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '') === 'B1\n',
+      (await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '')).trimEnd() === 'A1' &&
+      (await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '')).trimEnd() === 'B1',
     installedCoreUnchanged: !changedCore.stdout.trim(),
     installedApiUsed: (await inspectRuntimeSource(root)).installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: (await inspectRuntimeSource(root)).frameworkSourceBypass,
