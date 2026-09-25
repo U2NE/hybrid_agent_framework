@@ -115,6 +115,10 @@ export async function runInstalledLeadRuntimeSmoke(options = {}) {
     options.sandbox || 'workspace-write',
     '--cd',
     workspace,
+    '-m',
+    'gpt-6-luna',
+    '-c',
+    'model_reasoning_effort="medium"',
     prompt,
   ];
   const run = await runCodexExec(codexBin, codexArgs, {

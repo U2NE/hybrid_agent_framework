@@ -7,7 +7,7 @@ import {
   buildCodexProbeArgs,
   routingEffortPreflight,
   runAuthenticatedRoutingSmoke,
-  runWithSessionFallback,
+  runWithFailClosedModel,
 } from '../../scripts/routing-runtime-smoke.mjs';
 
 test('routing effort preflight covers Luna medium high xhigh max before Sol', () => {
@@ -32,53 +32,77 @@ test('Codex routing probe uses explicit model plus model_reasoning_effort config
   assert.ok(args.includes('model_reasoning_effort="xhigh"'));
 });
 
-test('negative model rejection retries once with session inheritance and no override', async () => {
+test('unapproved model fails locally and is never retried without an override', async () => {
   const calls = [];
   const runner = async (_bin, args) => {
     calls.push(args);
-    return calls.length === 1
-      ? { code: 1, stdout: '', stderr: 'unknown model' }
-      : { code: 0, stdout: 'OK', stderr: '' };
+    return { code: 0, stdout: 'SHOULD_NOT_RUN', stderr: '' };
   };
 
-  const result = await runWithSessionFallback({
+  const result = await runWithFailClosedModel({
     codexBin: 'codex',
     workspace: '/tmp/probe',
-    model: 'gpt-6-invalid',
+    model: 'gpt-6-astra',
     reasoningEffort: 'medium',
     runner,
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.fallbackUsed, true);
-  assert.equal(calls.length, 2);
-  assert.ok(calls[0].includes('-m'));
-  assert.equal(calls[1].includes('-m'), false);
-  assert.equal(calls[1].includes('-c'), false);
+  assert.equal(result.ok, false);
+  assert.equal(result.localRejected, true);
+  assert.equal(result.runnerCalled, false);
+  assert.equal(result.fallbackUsed, false);
+  assert.equal(result.rejectionCode, 'MODEL_NOT_ALLOWED');
+  assert.equal(calls.length, 0);
 });
 
-test('authenticated routing smoke report semantics distinguish override acceptance from model identity attestation', async () => {
+test('runtime rejection of an allowed explicit model does not trigger session/default fallback', async () => {
+  const calls = [];
+  const runner = async (_bin, args) => {
+    calls.push(args);
+    return { code: 1, stdout: '', stderr: 'requested model unavailable' };
+  };
+
+  const result = await runWithFailClosedModel({
+    codexBin: 'codex',
+    workspace: '/tmp/probe',
+    model: 'gpt-6-luna',
+    reasoningEffort: 'medium',
+    runner,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.localRejected, false);
+  assert.equal(result.runnerCalled, true);
+  assert.equal(result.fallbackUsed, false);
+  assert.equal(result.rejectionCode, 'MODEL_OVERRIDE_REJECTED');
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes('-m'));
+  assert.ok(calls[0].includes('-c'));
+});
+
+test('authenticated routing smoke report distinguishes explicit request acceptance from serving identity', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hybrid-routing-fixture-'));
   await fs.mkdir(path.join(root, '.git'));
-  let call = 0;
-  const runner = async () => {
-    call++;
-    if (call === 4) return { code: 1, stdout: '', stderr: 'model not found' };
+  const calls = [];
+  const runner = async (_bin, args) => {
+    calls.push(args);
     return { code: 0, stdout: '{"type":"item.completed"}\n', stderr: '' };
   };
 
   const result = await runAuthenticatedRoutingSmoke({
     workspace: root,
     runner,
-    invalidModel: 'gpt-6-invalid',
+    invalidModel: 'gpt-6-astra',
   });
 
   assert.deepEqual(
     result.effortResults.map((item) => [item.effort, item.overrideRequestAccepted]),
     [['high', true], ['xhigh', true], ['max', true]]
   );
-  assert.equal(result.fallback.firstRejected, true);
-  assert.equal(result.fallback.fallbackUsed, true);
-  assert.equal(result.fallback.fallbackSucceeded, true);
+  assert.equal(result.invalidModel.localRejected, true);
+  assert.equal(result.invalidModel.runnerCalled, false);
+  assert.equal(result.invalidModel.fallbackUsed, false);
+  assert.equal(result.invalidModel.rejectionCode, 'MODEL_NOT_ALLOWED');
+  assert.equal(calls.length, 3);
   assert.equal(result.claims.modelIdentityAttested, false);
 });

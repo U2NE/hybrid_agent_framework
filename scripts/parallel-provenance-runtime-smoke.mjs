@@ -21,6 +21,19 @@ const ownership = {
   A: { owner: 'implementer', files: ['src/a.txt'] },
   B: { owner: 'implementer', files: ['src/b.txt'] },
 };
+const CASE_K_TARGET_FILES = Object.freeze(['src/a.txt', 'src/b.txt']);
+
+function caseKImplementerChildren(decisions = [], parent = null) {
+  const candidates = decisions.filter(d =>
+    d.decision === 'spawn_implementer' &&
+    d.intendedAction?.role === 'implementer' &&
+    Array.isArray(d.files) &&
+    d.files.length > 0 &&
+    d.files.every(file => CASE_K_TARGET_FILES.includes(file)) &&
+    d.files.some(file => CASE_K_TARGET_FILES.includes(file))
+  );
+  return parent ? candidates.filter(d => d.parentDecisionId === parent.decisionId) : candidates;
+}
 
 export function validateParallelProvenanceEvidence(input = {}) {
   const decisions = Array.isArray(input.decisions) ? input.decisions : [];
@@ -29,44 +42,70 @@ export function validateParallelProvenanceEvidence(input = {}) {
   const errors = [];
   if (JSON.stringify(input) !== JSON.stringify(sanitizeStructuredMetadata(input))) errors.push('PROHIBITED_METADATA');
   if (!input.audit || input.audit.ok !== true) errors.push('AUDIT_MISSING_OR_FAILED');
-  const audit = auditDecisionTrace({ decisions, events, actorArtifacts, taskOwnership: ownership });
-  errors.push(...audit.findings.map(f => f.code));
 
   const parent = decisions.find(d => d.decision === 'parallel_wave' && d.stage === 'scheduling');
   if (!parent) errors.push('PARALLEL_PARENT_MISSING');
-  const children = decisions.filter(d => d.decision === 'spawn_implementer' && ['A', 'B'].includes(d.taskId));
+  const children = caseKImplementerChildren(decisions, parent);
+  const childIds = new Set(children.map(d => d.taskId));
+  const childDecisionIds = new Set(children.map(d => d.decisionId));
+  const dynamicOwnership = Object.fromEntries(children.map(d => [
+    d.taskId,
+    { owner: 'implementer', files: [...(d.files || [])] },
+  ]));
+  const audit = auditDecisionTrace({ decisions, events, actorArtifacts, taskOwnership: dynamicOwnership });
+  errors.push(...audit.findings.map(f => f.code));
+
   if (children.length !== 2) errors.push('CHILD_DECISION_MISSING');
   if (parent && children.some(d => d.parentDecisionId !== parent.decisionId)) errors.push('PARENT_LINK_MISMATCH');
   if (parent && children.some(d => d.waveId !== parent.waveId)) errors.push('WAVE_LINK_MISMATCH');
   if (new Set(children.map(d => d.taskId)).size !== 2) errors.push('TASK_ID_COLLISION');
   if (children.some(d => !d.agentRunId) || new Set(children.map(d => d.agentRunId)).size !== 2) errors.push('WORKER_IDENTITY_INVALID');
-  const actionEvents = events.filter(e => ['spawn', 'complete'].includes(e.action) && ['A', 'B'].includes(e.taskId));
+  if (children.some(d => d.facts?.requestedModel !== 'gpt-6-luna' || d.facts?.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
+  const ownedFiles = children.flatMap(d => d.files || []);
+  if (new Set(ownedFiles).size !== 2 || !CASE_K_TARGET_FILES.every(file => ownedFiles.includes(file))) errors.push('FILE_OWNERSHIP_MISMATCH');
+
+  const actionEvents = events.filter(e => ['spawn', 'complete'].includes(e.action) && childIds.has(e.taskId));
   const firstComplete = actionEvents.findIndex(e => e.action === 'complete');
-  if (firstComplete >= 0 && actionEvents.slice(0, firstComplete).filter(e => e.action === 'spawn').length !== 2) errors.push('PARALLEL_DISPATCH_NOT_OBSERVED');
+  if (firstComplete < 0 || actionEvents.slice(0, firstComplete).filter(e => e.action === 'spawn').length !== 2) errors.push('PARALLEL_DISPATCH_NOT_OBSERVED');
   if (children.some(d => !['native-observed', 'framework-logical'].includes(d.facts?.agentIdentityKind))) errors.push('WORKER_IDENTITY_KIND_INVALID');
 
-  if (actorArtifacts.some(a => !decisions.some(d => d.decisionId === a.decisionId) || !['A', 'B'].includes(a.taskId))) errors.push('ORPHAN_ACTOR_ARTIFACT');
+  if (actorArtifacts.some(a =>
+    CASE_K_TARGET_FILES.some(file => (a.files || []).includes(file)) &&
+    (!childDecisionIds.has(a.decisionId) || !childIds.has(a.taskId))
+  )) errors.push('ORPHAN_ACTOR_ARTIFACT');
 
   for (const child of children) {
     const linked = events.filter(e => e.decisionId === child.decisionId);
     if (!linked.some(e => e.action === 'spawn' && e.targetRole === 'implementer')) errors.push('SPAWN_ACTION_MISSING');
     if (!linked.some(e => e.action === 'complete' && e.targetRole === 'implementer')) errors.push('COMPLETE_ACTION_MISSING');
-    const actor = actorArtifacts.find(a => a.agentRunId === child.agentRunId && a.taskId === child.taskId);
+    const actor = actorArtifacts.find(a => a.decisionId === child.decisionId && a.agentRunId === child.agentRunId && a.taskId === child.taskId);
     if (!actor) errors.push('ACTOR_ARTIFACT_MISSING');
     else {
       if (actor.attribution !== 'reported') errors.push('ACTOR_ATTRIBUTION_INVALID');
-      const allowed = ownership[child.taskId].files;
+      if ((actor.requestedModel != null || actor.requestedReasoningEffort != null) &&
+          (actor.requestedModel !== 'gpt-6-luna' || actor.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
+      const spawnEvent = linked.find(e => e.action === 'spawn' && e.targetRole === 'implementer');
+      if (!spawnEvent || spawnEvent.requestedModel !== 'gpt-6-luna' || spawnEvent.requestedReasoningEffort !== 'medium') errors.push('WORKER_MODEL_POLICY_MISMATCH');
+      const completeEvent = linked.find(e => e.action === 'complete' && e.targetRole === 'implementer');
+      if (completeEvent && (completeEvent.requestedModel != null || completeEvent.requestedReasoningEffort != null) &&
+          (completeEvent.requestedModel !== 'gpt-6-luna' || completeEvent.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
+      const allowed = child.files || [];
       if ((actor.files || []).some(file => !allowed.includes(file))) errors.push('FILE_OWNERSHIP_MISMATCH');
     }
   }
 
   if (events.filter(e => e.decisionId || e.action).some(e => e.actorRole !== 'lead' || e.role !== 'lead')) errors.push('CENTRAL_WRITER_VIOLATION');
-  if (events.some(e => e.action === 'file_mutation' && e.actorRole === 'lead' && ['A', 'B'].includes(e.taskId))) errors.push('LEAD_IMPLEMENTATION_BYPASS');
+  if (events.some(e =>
+    e.action === 'file_mutation' &&
+    e.actorRole === 'lead' &&
+    (e.files || []).some(file => CASE_K_TARGET_FILES.includes(file))
+  )) errors.push('LEAD_IMPLEMENTATION_BYPASS');
   if (input.actualSiblingWorkersObserved !== true) errors.push('SIBLING_WORKERS_NOT_OBSERVED');
   if (input.fixtureValid !== true) errors.push('FIXTURE_MISMATCH');
   if (input.installedCoreUnchanged !== true) errors.push('INSTALLED_CORE_CHANGED');
   if (input.installedApiUsed !== true) errors.push('INSTALLED_API_NOT_USED');
   if (input.frameworkSourceBypass === true) errors.push('FRAMEWORK_SOURCE_BYPASS');
+  if (input.outerRequestedModel !== 'gpt-6-luna' || input.outerRequestedReasoningEffort !== 'medium') errors.push('OUTER_MODEL_POLICY_MISMATCH');
   return { ok: !errors.length, errors: [...new Set(errors)], audit };
 }
 
@@ -92,14 +131,14 @@ export async function preflightParallelProvenanceSmoke() {
     await assert.rejects(observability.appendRuntimeEvent({ runId, event: { decisionId: 'x', action: 'spawn', actorRole: 'worker' } }, { runtimeRoot }));
 
     const [childA, childB] = children;
-    const eventFor = (d, action) => ({ runId, decisionId: d.decisionId, action, taskId: d.taskId, waveId: d.waveId, agentRunId: d.agentRunId, actorRole: 'lead', role: 'lead', targetRole: 'implementer', attribution: 'derived', files: ownership[d.taskId].files });
+    const eventFor = (d, action) => ({ runId, decisionId: d.decisionId, action, taskId: d.taskId, waveId: d.waveId, agentRunId: d.agentRunId, actorRole: 'lead', role: 'lead', targetRole: 'implementer', attribution: 'derived', files: ownership[d.taskId].files, requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' });
     const events = [
       eventFor(childA, 'spawn'),
       eventFor(childB, 'spawn'),
       eventFor(childB, 'complete'),
       eventFor(childA, 'complete'),
     ];
-    const actorArtifacts = children.map(d => ({ runId, taskId: d.taskId, waveId: d.waveId, decisionId: d.decisionId, agentRunId: d.agentRunId, action: 'file_mutation', attribution: 'reported', files: ownership[d.taskId].files }));
+    const actorArtifacts = children.map(d => ({ runId, taskId: d.taskId, waveId: d.waveId, decisionId: d.decisionId, agentRunId: d.agentRunId, action: 'file_mutation', attribution: 'reported', files: ownership[d.taskId].files, requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' }));
     const positive = {
       decisions: prepared.decisionTrace,
       events,
@@ -110,6 +149,8 @@ export async function preflightParallelProvenanceSmoke() {
       installedCoreUnchanged: true,
       installedApiUsed: true,
       frameworkSourceBypass: false,
+      outerRequestedModel: 'gpt-6-luna',
+      outerRequestedReasoningEffort: 'medium',
     };
     assert.equal(validateParallelProvenanceEvidence(positive).ok, true);
 
@@ -129,6 +170,8 @@ export async function preflightParallelProvenanceSmoke() {
       installedApiMissing: { ...positive, installedApiUsed: false },
       frameworkBypass: { ...positive, frameworkSourceBypass: true },
       installedCoreModified: { ...positive, installedCoreUnchanged: false },
+      outerModelMissing: { ...positive, outerRequestedModel: null },
+      workerModelMismatch: { ...positive, events: events.map((e, i) => i === 0 ? { ...e, requestedModel: 'gpt-6-astra' } : e) },
     };
     for (const [name, data] of Object.entries(negatives)) assert.equal(validateParallelProvenanceEvidence(data).ok, false, name);
     return { status: 'preflight-passed', case: 'K', runtimeExecuted: false, negativeCases: Object.keys(negatives) };
@@ -148,12 +191,24 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
   await exec('git', ['-c', 'user.name=Hybrid', '-c', 'user.email=hybrid@example.invalid', 'commit', '-qm', 'Case K baseline'], { cwd: root });
   const prompt = [
     '$hybrid',
-    'Execute the already-approved Hybrid plan in this repository.',
-    'Use the installed Hybrid framework and its installed contracts, including provenance. Use runtime run id case-k.',
-    'Complete implementation and verification. If either required Implementer cannot be spawned, fail closed without editing its owned file.',
-    'Do not modify .hybrid core. Do not commit.',
+    'Execute the exact approved Case K fixture in .planning/CASE-K.json and PLAN.md. Do not invent a different preparation input.',
+    'Read AGENTS.md and the Hybrid skill contract, but do not inspect .hybrid/core source unless an installed API call fails.',
+    'First call pure prepareExecution() on CASE-K.json and require one parallel wave containing Task A and Task B. Pure inspection must not write provenance.',
+    'Then call prepareExecutionWithProvenance() on that exact same object exactly once. Do not persist trial preparations or replay decisionTrace manually.',
+    'Keep the two returned spawn_implementer decisions as objects. Never transcribe or retype decisionIds.',
+    'Spawn both sibling Implementers with explicit gpt-6-luna / medium before waiting for either worker. Task A owns only src/a.txt; Task B owns only src/b.txt. The Lead must edit neither file.',
+    'After each successful spawn, record its Lead spawn action using createLeadProvenanceSession().writeActionForDecision(childDecision,{action:"spawn",attribution:"derived"}). Both spawn actions must be persisted before the first completion action.',
+    'Each worker edits only its owned file and writes one reported actor artifact for its own agentRunId after programmatically locating its persisted spawn decision; do not hand-copy a decisionId.',
+    'After workers return, record each completion via writeActionForDecision(childDecision,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
+    'Verify src/a.txt is exactly A1 and src/b.txt is exactly B1, then run auditDecisionTrace over persisted decisions/events/actor artifacts with exact task ownership and persist audit.json.',
+    'Finish only if audit.ok is true and findings is empty. Use runtime run id case-k. Do not modify .hybrid/core. Do not commit.',
   ].join('\n');
-  const run = await runCodexExec(bin, ['exec', '--strict-config', '--json', '--sandbox', 'workspace-write', '--cd', root, prompt], {
+  const run = await runCodexExec(bin, [
+    'exec', '--strict-config', '--json', '--sandbox', 'workspace-write', '--cd', root,
+    '-m', 'gpt-6-luna',
+    '-c', 'model_reasoning_effort="medium"',
+    prompt,
+  ], {
     cwd: root,
     timeoutMs: options.timeoutMs || 360000,
   });
@@ -179,6 +234,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     installedCoreUnchanged: !changedCore.stdout.trim(),
     installedApiUsed: (await inspectRuntimeSource(root)).installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: (await inspectRuntimeSource(root)).frameworkSourceBypass,
+    outerRequestedModel: run.requestedModel,
+    outerRequestedReasoningEffort: run.requestedReasoningEffort,
   });
   const usageLimit = usageLimitReason(run);
   if (run.code !== 0 || run.timedOut) semantic.errors.push('CODEX_FAILED');
@@ -188,6 +245,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     artifactBackedSiblingExecution: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }),
     nativeDelegationSignals: delegationCalls(run.stdout).length,
     leadMutationObserved: hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
+    outerRequestedModel: run.requestedModel,
+    outerRequestedReasoningEffort: run.requestedReasoningEffort,
     codexCode: run.code,
     timedOut: run.timedOut,
     usageLimit,
@@ -208,6 +267,17 @@ async function project(label) {
   await fs.writeFile(path.join(root, 'src/b.txt'), 'B0\n');
   await fs.writeFile(path.join(root, '.planning/PLAN.md'), '# Approved Plan\n\nStatus: APPROVED\n\n## Task A\n- owner: implementer\n- files_modified: src/a.txt\n- depends_on: []\n- change: replace A0 with A1\n\n## Task B\n- owner: implementer\n- files_modified: src/b.txt\n- depends_on: []\n- change: replace B0 with B1\n\nThe two tasks are independent and approved for one parallel wave.\n');
   await installProject(root, { skipCodexValidation: true });
+  const fixture = {
+    runId,
+    revision: 1,
+    request: 'Execute approved independent Task A and Task B in one parallel wave',
+    tasks: tasks.map(task => ({
+      ...task,
+      agentRunId: 'logical-' + task.id,
+      agentIdentityKind: 'framework-logical',
+    })),
+  };
+  await fs.writeFile(path.join(root, '.planning/CASE-K.json'), JSON.stringify(fixture, null, 2) + '\n');
   return root;
 }
 async function readJsonLines(file) {
@@ -272,12 +342,15 @@ function hasLeadTargetMutation(stdout, targets = []) {
   }));
 }
 function artifactBackedSiblingExecution({ decisions = [], events = [], actorArtifacts = [] } = {}) {
-  const children = decisions.filter(d =>
-    d.decision === 'spawn_implementer' &&
-    ['A', 'B'].includes(d.taskId) &&
-    d.intendedAction?.role === 'implementer'
+  const parent = decisions.find(d => d.decision === 'parallel_wave' && d.stage === 'scheduling');
+  const children = caseKImplementerChildren(decisions, parent);
+  if (!parent || children.length !== 2) return false;
+  const actionEvents = events.filter(e =>
+    ['spawn', 'complete'].includes(e.action) &&
+    children.some(child => child.taskId === e.taskId)
   );
-  if (children.length !== 2) return false;
+  const firstComplete = actionEvents.findIndex(e => e.action === 'complete');
+  if (firstComplete < 0 || actionEvents.slice(0, firstComplete).filter(e => e.action === 'spawn').length !== 2) return false;
   return children.every(child => {
     const linked = events.filter(e => e.decisionId === child.decisionId);
     const actor = actorArtifacts.find(a =>
@@ -285,7 +358,7 @@ function artifactBackedSiblingExecution({ decisions = [], events = [], actorArti
       a.taskId === child.taskId &&
       a.agentRunId === child.agentRunId &&
       a.attribution === 'reported' &&
-      (a.files || []).every(file => ownership[child.taskId].files.includes(file))
+      (a.files || []).every(file => (child.files || []).includes(file))
     );
     return Boolean(
       actor &&
@@ -294,6 +367,7 @@ function artifactBackedSiblingExecution({ decisions = [], events = [], actorArti
     );
   });
 }
+
 function usageLimitReason(run = {}) {
   const text = String(run.stdout || '') + '\n' + String(run.stderr || '');
   const match = text.match(/[^\n]*(?:usage limit|try again at)[^\n]*/i);

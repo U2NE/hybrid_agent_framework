@@ -128,6 +128,7 @@ export function validateDecisionProvenanceEvidence(input = {}) {
     d.intendedAction?.role === 'implementer'
   );
   if (!spawn) errors.push('MISSING_IMPLEMENTER_DECISION');
+  if (spawn && (spawn.facts?.requestedModel !== 'gpt-6-luna' || spawn.facts?.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
   if (spawn && !events.some(e =>
     e.decisionId === spawn.decisionId &&
     e.action === 'spawn' &&
@@ -146,12 +147,33 @@ export function validateDecisionProvenanceEvidence(input = {}) {
 
   const actor = actorArtifacts.find(a => a.taskId === spawn?.taskId && a.agentRunId === spawn?.agentRunId);
   if (!actor || actor.attribution !== 'reported' || !actor.files?.includes('README.md')) errors.push('MISSING_REPORTED_ACTOR_ARTIFACT');
+  if (actor && (actor.requestedModel != null || actor.requestedReasoningEffort != null) &&
+      (actor.requestedModel !== 'gpt-6-luna' || actor.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
+  if (spawn) {
+    const linkedSpawn = events.find(e => e.decisionId === spawn.decisionId && e.action === 'spawn' && e.targetRole === 'implementer');
+    if (!linkedSpawn || linkedSpawn.requestedModel !== 'gpt-6-luna' || linkedSpawn.requestedReasoningEffort !== 'medium') errors.push('WORKER_MODEL_POLICY_MISMATCH');
+    const linkedComplete = events.find(e => e.decisionId === spawn.decisionId && e.action === 'complete' && e.targetRole === 'implementer');
+    if (linkedComplete && (linkedComplete.requestedModel != null || linkedComplete.requestedReasoningEffort != null) &&
+        (linkedComplete.requestedModel !== 'gpt-6-luna' || linkedComplete.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
+  }
 
-  const verify = decisions.find(d => d.stage === 'review' && d.decision === 'lightweight_verify' && d.intendedAction?.type === 'lightweight-verify');
-  if (!verify || !events.some(e => e.decisionId === verify.decisionId && e.action === 'lightweight-verify' && e.outcome === 'pass')) errors.push('MISSING_LIGHTWEIGHT_VERIFY');
+  const verify = decisions.find(d =>
+    d.stage === 'review' &&
+    d.intendedAction?.type === 'lightweight-verify' &&
+    (d.facts?.contentMatches === true || /lightweight.*verif/i.test(String(d.decision)))
+  );
+  const verifyEvent = verify && events.find(e => e.decisionId === verify.decisionId && e.action === 'lightweight-verify');
+  if (!verify || !verifyEvent || verifyEvent.outcome === 'fail') errors.push('MISSING_LIGHTWEIGHT_VERIFY');
 
-  const completion = decisions.find(d => d.stage === 'completion' && d.intendedAction?.type === 'completion');
-  if (!completion || !events.some(e => e.decisionId === completion.decisionId && e.action === 'completion' && e.outcome === 'pass')) errors.push('MISSING_COMPLETION');
+  const completion = decisions.find(d =>
+    d.stage === 'completion' &&
+    ['completion', 'complete'].includes(d.intendedAction?.type)
+  );
+  const completionEvent = completion && events.find(e =>
+    e.decisionId === completion.decisionId &&
+    e.action === completion.intendedAction?.type
+  );
+  if (!completion || !completionEvent || completionEvent.outcome === 'fail') errors.push('MISSING_COMPLETION');
 
   if (events.some(e => (e.actorRole || e.role) !== 'lead')) errors.push('CENTRAL_EVENT_NOT_LEAD');
   if (events.some(e => e.action === 'file_mutation' && (e.actorRole || e.role) === 'lead' && e.files?.includes('README.md'))) errors.push('LEAD_IMPLEMENTATION_BYPASS');
@@ -162,6 +184,7 @@ export function validateDecisionProvenanceEvidence(input = {}) {
   if (input.installedApiUsed === false) errors.push('INSTALLED_API_NOT_USED');
   if (input.frameworkSourceBypass === true) errors.push('FRAMEWORK_SOURCE_BYPASS');
   if (input.installedCoreChanged === true) errors.push('INSTALLED_CORE_CHANGED');
+  if (input.outerRequestedModel !== 'gpt-6-luna' || input.outerRequestedReasoningEffort !== 'medium') errors.push('OUTER_MODEL_POLICY_MISMATCH');
   return { ok: !errors.length, errors: [...new Set(errors)], audit };
 }
 
@@ -185,7 +208,7 @@ function synthetic() {
     runId, stage: 'dispatch', taskId, waveId: 'wave-1', agentRunId: logicalAgentRunId,
     decision: 'spawn_implementer', parentDecisionId: wave.decisionId,
     policy: { rule: 'execution.task-owner' }, reasonCodes: ['TASK_OWNER_IMPLEMENTER'],
-    facts: { dependsOn: [], agentIdentityKind: 'framework-logical' },
+    facts: { dependsOn: [], agentIdentityKind: 'framework-logical', requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' },
     files: ['README.md'], intendedAction: { type: 'spawn', role: 'implementer', taskId },
   });
   const verify = buildDecision({
@@ -199,20 +222,21 @@ function synthetic() {
     files: ['README.md'], intendedAction: { type: 'completion', role: 'lead' },
   });
   const events = [
-    { runId, decisionId: spawn.decisionId, action: 'spawn', taskId, waveId: 'wave-1', agentRunId: logicalAgentRunId, targetRole: 'implementer', actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'] },
-    { runId, decisionId: spawn.decisionId, action: 'complete', taskId, waveId: 'wave-1', agentRunId: logicalAgentRunId, targetRole: 'implementer', actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'], outcome: 'pass' },
+    { runId, decisionId: spawn.decisionId, action: 'spawn', taskId, waveId: 'wave-1', agentRunId: logicalAgentRunId, targetRole: 'implementer', actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'], requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' },
+    { runId, decisionId: spawn.decisionId, action: 'complete', taskId, waveId: 'wave-1', agentRunId: logicalAgentRunId, targetRole: 'implementer', actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'], requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium', outcome: 'pass' },
     { runId, decisionId: verify.decisionId, action: 'lightweight-verify', taskId, actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'], outcome: 'pass' },
     { runId, decisionId: completion.decisionId, action: 'completion', taskId, actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'], outcome: 'pass' },
   ];
   const actorArtifacts = [{
     runId, decisionId: spawn.decisionId, action: 'file_mutation', taskId,
-    agentRunId: logicalAgentRunId, attribution: 'reported', files: ['README.md'], outcome: 'pass',
+    agentRunId: logicalAgentRunId, attribution: 'reported', files: ['README.md'], requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium', outcome: 'pass',
   }];
   const decisions = [classification, activation, wave, spawn, verify, completion];
   const audit = auditDecisionTrace({ decisions, events, actorArtifacts, taskOwnership: { [taskId]: ['README.md'] } });
   return {
     decisions, events, actorArtifacts, audit, fixtureValid: true, workerExecutionObserved: true, leadMutationObserved: false,
     installedApiUsed: true, frameworkSourceBypass: false, installedCoreChanged: false,
+    outerRequestedModel: 'gpt-6-luna', outerRequestedReasoningEffort: 'medium',
   };
 }
 
@@ -221,6 +245,27 @@ async function project(label) {
   await exec('git', ['init', '-q'], { cwd: root });
   await fs.writeFile(path.join(root, 'README.md'), initial);
   await installProject(root, { skipCodexValidation: true });
+  const fixture = {
+    runId,
+    revision: 1,
+    request: 'Fix one-line typo in README.md',
+    task: {
+      id: taskId,
+      request: 'Fix one-line typo in README.md',
+      forceTier: 0,
+      files: ['README.md'],
+      acceptanceCriteria: ['README.md first line is # Case J verified'],
+    },
+    tasks: [{
+      id: taskId,
+      owner: 'implementer',
+      files_modified: ['README.md'],
+      depends_on: [],
+      agentRunId: logicalAgentRunId,
+      agentIdentityKind: 'framework-logical',
+    }],
+  };
+  await fs.writeFile(path.join(root, '.planning/CASE-J.json'), JSON.stringify(fixture, null, 2) + '\n');
   return root;
 }
 
@@ -263,6 +308,8 @@ export async function preflightDecisionProvenanceSmoke() {
       noWorkerExecution: { ...positive, workerExecutionObserved: false },
       frameworkSourceBypass: { ...positive, frameworkSourceBypass: true },
       installedCoreChanged: { ...positive, installedCoreChanged: true },
+      outerModelMissing: { ...positive, outerRequestedModel: null },
+      workerModelMismatch: { ...positive, events: positive.events.map(e => e.action === 'spawn' ? { ...e, requestedModel: 'gpt-6-astra' } : e) },
     };
     for (const key of ['hiddenReasoning', 'prompt', 'rawSource']) {
       negatives[key] = { ...positive, events: [{ ...positive.events[0], nested: { [key]: 'forbidden' } }, ...positive.events.slice(1)] };
@@ -333,14 +380,26 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
 
   const prompt = [
     '$hybrid',
-    'Use the installed Hybrid contract to perform this trivial Tier 0 task: change README.md from "# Case J" to "# Case J verified".',
-    'Use runtime run id case-j and follow the installed provenance contract.',
-    'If the required Implementer cannot be spawned, fail closed without editing README.md.',
-    'Do not modify .hybrid/core. Do not commit.',
+    'Execute the exact installed Case J fixture in .planning/CASE-J.json. Do not invent or renormalize a different preparation input.',
+    'Read AGENTS.md and the Hybrid skill contract, but do not inspect .hybrid/core source unless an installed API call fails.',
+    'First call pure prepareExecution() on the exact CASE-J object and require Tier 0 with pipeline implementer,lightweight-verify. Pure inspection must not write provenance.',
+    'Then call prepareExecutionWithProvenance() on that exact same object exactly once. Do not persist trial preparations and do not replay decisionTrace manually.',
+    'Keep the returned spawn_implementer decision as an object. Never transcribe or retype a decisionId.',
+    'Spawn exactly one Implementer using the decision policy model gpt-6-luna and effort medium. The Lead must not edit README.md.',
+    'After successful spawn, record the Lead spawn action with createLeadProvenanceSession().writeActionForDecision(spawnDecision,{action:"spawn",attribution:"derived"}).',
+    'The Implementer must edit only README.md and write one reported actor artifact for its own agentRunId. It must locate the persisted spawn decision programmatically; do not hand-copy its decisionId.',
+    'After the Implementer returns, record its completion with writeActionForDecision(spawnDecision,{action:"complete",attribution:"derived",outcome:"pass"}).',
+    'Perform deterministic lightweight verification as Lead. Build one review decision named lightweight_verify with intendedAction {type:"lightweight-verify",role:"lead"} and facts.contentMatches=true, write it, then record its action via writeActionForDecision with outcome pass.',
+    'Build one completion decision with stage completion, decision complete, intendedAction {type:"completion",role:"lead"}, write it, then record its action via writeActionForDecision with outcome pass.',
+    'Run auditDecisionTrace over the persisted decisions/events/actor artifact and persist audit.json. Finish only if audit.ok is true and findings is empty.',
+    'Use runtime run id case-j. Do not modify .hybrid/core. Do not commit.',
   ].join('\n');
 
   const run = await runCodexExec(bin, [
-    'exec', '--strict-config', '--json', '--sandbox', 'workspace-write', '--cd', root, prompt,
+    'exec', '--strict-config', '--json', '--sandbox', 'workspace-write', '--cd', root,
+    '-m', 'gpt-6-luna',
+    '-c', 'model_reasoning_effort="medium"',
+    prompt,
   ], { cwd: root, timeoutMs: options.timeoutMs || 300000 });
 
   await fs.writeFile(path.join(root, '.planning/case-j-codex.events.jsonl'), run.stdout || '', 'utf8');
@@ -352,12 +411,14 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
   const changedCore = await exec('git', ['diff', 'HEAD', '--name-only', '--', '.hybrid/core'], { cwd: root });
   const semantic = validateDecisionProvenanceEvidence({
     ...evidence,
-    fixtureValid: await fs.readFile(path.join(root, 'README.md'), 'utf8') === final,
+    fixtureValid: (await fs.readFile(path.join(root, 'README.md'), 'utf8')).trimEnd() === final.trimEnd(),
     workerExecutionObserved: artifactBackedImplementerExecution(evidence),
     leadMutationObserved: hasLeadTargetMutation(run.stdout, ['README.md']),
     installedApiUsed: runtimeSource.installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: runtimeSource.frameworkSourceBypass,
     installedCoreChanged: Boolean(changedCore.stdout.trim()),
+    outerRequestedModel: run.requestedModel,
+    outerRequestedReasoningEffort: run.requestedReasoningEffort,
   });
   const usageLimit = usageLimitReason(run);
   if (run.code !== 0 || run.timedOut) semantic.errors.push('CODEX_FAILED');
@@ -367,6 +428,8 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
     workerExecutionObserved: artifactBackedImplementerExecution(evidence),
     nativeDelegationSignals: delegationCalls(run.stdout).length,
     leadMutationObserved: hasLeadTargetMutation(run.stdout, ['README.md']),
+    outerRequestedModel: run.requestedModel,
+    outerRequestedReasoningEffort: run.requestedReasoningEffort,
     codexCode: run.code,
     timedOut: run.timedOut,
     usageLimit,

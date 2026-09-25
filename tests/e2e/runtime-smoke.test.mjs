@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { preflightSmokeCase, runCodexExec, validateLiveSmokeWorkspace } from '../../scripts/runtime-smoke.mjs';
+import { preflightSmokeCase, runCodexExec, validateCodexExecInvocation, validateLiveSmokeWorkspace } from '../../scripts/runtime-smoke.mjs';
 
 test('runtime smoke Case A preflight proves sibling parallel eligibility', () => {
   const result = preflightSmokeCase('A');
@@ -174,6 +174,63 @@ test('Case C validator accepts real-style underscore role and direct route evide
   });
   const result = await validateLiveSmokeWorkspace('C', root, preflightSmokeCase('C'));
   assert.equal(result.ok, true);
+});
+
+
+test('Codex exec guard requires one explicit allowlisted model and supported reasoning effort', () => {
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '--json']),
+    error => error?.code === 'MODEL_REQUIRED'
+  );
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '-m', 'gpt-6-luna', '--json']),
+    error => error?.code === 'EFFORT_REQUIRED'
+  );
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort="medium"']),
+    error => error?.code === 'MODEL_NOT_ALLOWED'
+  );
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '-m', 'gpt-99-future', '-c', 'model_reasoning_effort="medium"']),
+    error => error?.code === 'MODEL_NOT_ALLOWED'
+  );
+  assert.deepEqual(
+    validateCodexExecInvocation(['exec', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="medium"']),
+    { inference: true, model: 'gpt-6-luna', reasoningEffort: 'medium' }
+  );
+  assert.deepEqual(
+    validateCodexExecInvocation(['exec', '-m', 'gpt-6-sol', '-c', 'model_reasoning_effort="high"']),
+    { inference: true, model: 'gpt-6-sol', reasoningEffort: 'high' }
+  );
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="ultra"']),
+    error => error?.code === 'EFFORT_NOT_ALLOWED'
+  );
+  assert.throws(
+    () => validateCodexExecInvocation(['exec', '-m', 'gpt-6-sol', '-c', 'model_reasoning_effort="impossible"']),
+    error => error?.code === 'EFFORT_NOT_ALLOWED'
+  );
+});
+
+test('invalid Hybrid Codex exec is rejected before a subprocess can be spawned', async () => {
+  await assert.rejects(
+    runCodexExec('/definitely/not/a/codex', [
+      'exec', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort="medium"', 'noop',
+    ]),
+    error => error?.code === 'MODEL_NOT_ALLOWED'
+  );
+  await assert.rejects(
+    runCodexExec('/definitely/not/a/codex', [
+      'exec', '-c', 'model_reasoning_effort="medium"', 'noop',
+    ]),
+    error => error?.code === 'MODEL_REQUIRED'
+  );
+  await assert.rejects(
+    runCodexExec('/definitely/not/a/codex', [
+      'exec', '-m', 'gpt-6-luna', 'noop',
+    ]),
+    error => error?.code === 'EFFORT_REQUIRED'
+  );
 });
 
 test('Codex exec runner enforces a bounded timeout', async () => {

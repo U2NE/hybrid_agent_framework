@@ -53,7 +53,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(agents, /hybrid-agent-framework:start/);
   assert.match(agents, /\$hybrid/);
   assert.match(agents, /Luna effort ladder/);
-  assert.match(agents, /session-inheritance fallback/);
+  assert.match(agents, /session\/default model inheritance is prohibited/i);
   assert.match(agents, /runQualityClosure\(\)/);
 
   const qualityClosure = await fs.readFile(
@@ -81,7 +81,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   );
   assert.equal(routingPolicy.default_model_tier, 'luna');
   assert.equal(routingPolicy.heavy_model_tier, 'sol');
-  assert.equal(routingPolicy.fallback, 'session-inheritance');
+  assert.equal(routingPolicy.fallback, 'fail-closed');
 });
 
 test('Codex CLI presence adds config validation while missing auth remains runtime pending', async () => {

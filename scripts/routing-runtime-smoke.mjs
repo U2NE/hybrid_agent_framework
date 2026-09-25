@@ -6,6 +6,7 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveRoleRouting } from '../core/routing/index.mjs';
+import { runCodexExec, validateCodexExecInvocation } from './runtime-smoke.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 
@@ -26,7 +27,7 @@ export function routingEffortPreflight() {
   }));
 }
 
-export function buildCodexProbeArgs({ model = null, reasoningEffort = null, cwd }) {
+export function buildCodexProbeArgs({ model, reasoningEffort, cwd }) {
   const args = [
     'exec',
     '--strict-config',
@@ -37,46 +38,45 @@ export function buildCodexProbeArgs({ model = null, reasoningEffort = null, cwd 
     cwd,
   ];
   if (model) args.push('-m', model);
-  if (reasoningEffort) {
-    args.push('-c', 'model_reasoning_effort=' + JSON.stringify(reasoningEffort));
-  }
+  if (reasoningEffort) args.push('-c', 'model_reasoning_effort=' + JSON.stringify(reasoningEffort));
   args.push('Reply with exactly the single word OK.');
   return args;
 }
 
-export async function runWithSessionFallback({
+export async function runWithFailClosedModel({
   codexBin = process.env.CODEX_BIN || 'codex',
   workspace,
   model,
   reasoningEffort,
-  runner = runProcess,
+  runner = runCodexExec,
 }) {
-  const firstArgs = buildCodexProbeArgs({ model, reasoningEffort, cwd: workspace });
-  const first = await runner(codexBin, firstArgs, { cwd: workspace });
-
-  if (first.code === 0) {
+  const args = buildCodexProbeArgs({ model, reasoningEffort, cwd: workspace });
+  try {
+    validateCodexExecInvocation(args);
+  } catch (error) {
     return {
-      ok: true,
+      ok: false,
+      localRejected: true,
+      runnerCalled: false,
       fallbackUsed: false,
-      first,
-      second: null,
-      attemptedModel: model,
-      attemptedReasoningEffort: reasoningEffort,
+      rejectionCode: error.code || 'MODEL_POLICY_VIOLATION',
+      error: String(error.message || error),
+      attemptedModel: model ?? null,
+      attemptedReasoningEffort: reasoningEffort ?? null,
+      result: null,
     };
   }
 
-  const secondArgs = buildCodexProbeArgs({ cwd: workspace });
-  const second = await runner(codexBin, secondArgs, { cwd: workspace });
-
+  const result = await runner(codexBin, args, { cwd: workspace });
   return {
-    ok: second.code === 0,
-    fallbackUsed: true,
-    firstRejected: true,
-    first,
-    second,
+    ok: result.code === 0,
+    localRejected: false,
+    runnerCalled: true,
+    fallbackUsed: false,
+    rejectionCode: result.code === 0 ? null : 'MODEL_OVERRIDE_REJECTED',
     attemptedModel: model,
     attemptedReasoningEffort: reasoningEffort,
-    fallback: 'session-inheritance',
+    result,
   };
 }
 
@@ -86,49 +86,48 @@ export async function runAuthenticatedRoutingSmoke(options = {}) {
   await ensureGitRepo(workspace);
 
   const preflight = routingEffortPreflight();
+  const runner = options.runner || runCodexExec;
   const effortResults = [];
 
   for (const effort of ['high', 'xhigh', 'max']) {
-    const result = await runWithSessionFallback({
+    const result = await runWithFailClosedModel({
       codexBin,
       workspace,
       model: 'gpt-6-luna',
       reasoningEffort: effort,
-      runner: options.runner || runProcess,
+      runner,
     });
     effortResults.push({
       effort,
-      overrideRequestAccepted: result.first.code === 0,
+      overrideRequestAccepted: result.ok,
       fallbackUsed: result.fallbackUsed,
-      exitCode: result.first.code,
-      error: result.first.code === 0 ? null : compactError(result.first),
+      exitCode: result.result?.code ?? null,
+      error: result.result?.code === 0 ? null : compactError(result.result) || result.error || null,
     });
   }
 
-  const fallback = await runWithSessionFallback({
+  const invalid = await runWithFailClosedModel({
     codexBin,
     workspace,
     model: options.invalidModel || 'gpt-6-hybrid-intentionally-invalid',
     reasoningEffort: 'medium',
-    runner: options.runner || runProcess,
+    runner,
   });
 
   return {
     workspace,
     preflight,
     effortResults,
-    fallback: {
-      firstRejected: fallback.first.code !== 0,
-      fallbackUsed: fallback.fallbackUsed,
-      fallbackSucceeded: fallback.ok && fallback.second?.code === 0,
-      firstExitCode: fallback.first.code,
-      secondExitCode: fallback.second?.code ?? null,
-      policy: fallback.fallback || null,
-      firstError: compactError(fallback.first),
+    invalidModel: {
+      localRejected: invalid.localRejected,
+      runnerCalled: invalid.runnerCalled,
+      fallbackUsed: invalid.fallbackUsed,
+      rejectionCode: invalid.rejectionCode,
+      attemptedModel: invalid.attemptedModel,
     },
     claims: {
       modelIdentityAttested: false,
-      interpretation: 'Successful probes prove the explicit model/reasoning override request was accepted by Codex; they do not independently attest the underlying serving model identity.',
+      interpretation: 'Successful probes prove the explicit allowlisted model/reasoning request was accepted by Codex; they do not independently attest the backend serving-model identity.',
     },
   };
 }
@@ -188,8 +187,9 @@ if (isMainModule()) {
     console.log(JSON.stringify(result, null, 2));
     if (
       result.effortResults.some((item) => !item.overrideRequestAccepted) ||
-      !result.fallback.firstRejected ||
-      !result.fallback.fallbackSucceeded
+      !result.invalidModel.localRejected ||
+      result.invalidModel.runnerCalled ||
+      result.invalidModel.fallbackUsed
     ) {
       process.exitCode = 1;
     }

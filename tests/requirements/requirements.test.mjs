@@ -169,3 +169,28 @@ test('bounded simple requirements do not pay irrelevant edge-probe costs', () =>
   assert.deepEqual(gate.applicable, ['error behavior']);
   assert.equal(gate.pass, true);
 });
+
+
+test('classifier accepts execution-schema aliases without broadening Tier 0 heuristics', () => {
+  const aliased = classifyTask({
+    request: 'Fix README.md typo',
+    files_modified: ['README.md'],
+    acceptance_criteria: ['wording corrected'],
+  });
+  assert.equal(aliased.tier, TaskTier.TRIVIAL);
+  assert.equal(aliased.evidence.fileAnchors >= 1, true);
+  assert.equal(aliased.evidence.acceptanceAnchors >= 1, true);
+
+  const explicitFixture = classifyTask({
+    request: 'Change README.md title from Case J to Case J verified',
+    files_modified: ['README.md'],
+    forceTier: 0,
+  });
+  assert.equal(explicitFixture.tier, TaskTier.TRIVIAL);
+
+  const ordinaryBounded = classifyTask({
+    request: 'Change auth permission checks',
+    files_modified: ['src/auth.js'],
+  });
+  assert.equal(ordinaryBounded.tier, TaskTier.BOUNDED);
+});

@@ -486,10 +486,7 @@ async function runImplementerRepair({
     '--cd',
     workspace,
   ];
-  if (route.model) {
-    args.push('-m', route.model);
-    if (route.reasoningEffort) args.push('-c', 'model_reasoning_effort=' + JSON.stringify(route.reasoningEffort));
-  }
+  args.push('-m', route.model, '-c', 'model_reasoning_effort=' + JSON.stringify(route.reasoningEffort));
   args.push(prompt);
 
   const startedAt = Date.now();

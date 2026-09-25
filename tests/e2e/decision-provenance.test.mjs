@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildDecision, validateDecision, createDecisionWriter, createActorArtifactWriter, writeAuditArtifact, auditDecisionTrace } from '../../core/provenance/index.mjs';
+import { actionForDecision, buildDecision, validateDecision, createDecisionWriter, createActorArtifactWriter, writeAuditArtifact, auditDecisionTrace } from '../../core/provenance/index.mjs';
 import { appendRuntimeEvent, sanitizeStructuredMetadata, createOrchestrationEventWriter } from '../../core/observability/index.mjs';
 import { prepareExecution, prepareExecutionWithProvenance, runQualityClosure } from '../../core/orchestrator/index.mjs';
 import { assessSecurityReview, requiresSecurityReview } from '../../core/verification/index.mjs';
@@ -40,6 +40,49 @@ test('Lead central writer, scoped worker artifacts, storage failure and strict',
     assert.equal((await writeAuditArtifact({}, { ...options, runtimeRoot: blocked })).ok, false);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+test('linked action helper binds exact decision identity and routed model metadata', () => {
+  const d = decision({
+    facts: { requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' },
+    intendedAction: { type: 'spawn', role: 'implementer' },
+  });
+  const event = actionForDecision(d, {
+    decisionId: 'manual-typo-must-not-win',
+    action: 'spawn',
+    attribution: 'observed',
+  });
+  assert.equal(event.decisionId, d.decisionId);
+  assert.equal(event.runId, d.runId);
+  assert.equal(event.taskId, d.taskId);
+  assert.equal(event.waveId, d.waveId);
+  assert.equal(event.agentRunId, d.agentRunId);
+  assert.equal(event.targetRole, 'implementer');
+  assert.equal(event.requestedModel, 'gpt-6-luna');
+  assert.equal(event.requestedReasoningEffort, 'medium');
+});
+
+test('Lead lightweight verification is compatible with implementer task ownership', () => {
+  const verify = buildDecision({
+    runId: 'r',
+    stage: 'review',
+    taskId: 'A',
+    decision: 'lightweight_verify',
+    intendedAction: { type: 'lightweight-verify', role: 'lead' },
+    facts: { contentMatches: true },
+    files: ['a.js'],
+  });
+  const event = actionForDecision(verify, {
+    attribution: 'observed',
+    outcome: 'pass',
+    files: ['a.js'],
+  });
+  const audit = auditDecisionTrace({
+    decisions: [verify],
+    events: [event],
+    taskOwnership: { A: { owner: 'implementer', files: ['a.js'] } },
+  });
+  assert.equal(audit.ok, true);
+});
+
 test('parallel DAG accepts reordered siblings and detects missing siblings/orphans', () => {
   const parent = buildDecision({ runId: 'r', stage: 'scheduling', decision: 'parallel', waveId: 'w' });
   const children = ['A', 'B', 'C'].map(taskId => decision({ taskId, agentRunId: taskId, parentDecisionId: parent.decisionId }));
@@ -82,8 +125,10 @@ test('prepareExecution records existing isolation/routing/security without modif
     assert.ok(result.decisionTrace.some(d => d.decision === 'route' && d.facts.escalated && d.facts.escalationReasons.includes('luna-capability-exhausted')));
     assert.deepEqual(result.decisionTrace, prepareExecution({ ...input, worktreeAvailable }).decisionTrace);
   }
-  const fallback = prepareExecution({ ...input, modelRouting: { supportedModels: [] } });
-  assert.ok(fallback.decisionTrace.some(d => d.decision === 'route' && d.facts.fallbackReason === 'model-not-available' && d.facts.inheritSessionModel));
+  assert.throws(
+    () => prepareExecution({ ...input, modelRouting: { supportedModels: [] } }),
+    error => error?.code === 'MODEL_UNAVAILABLE'
+  );
   const serialized = prepareExecution({ tasks: [{ id: 'A', files_modified: ['a.js'] }, { id: 'B', files_modified: ['a.js'] }] });
   assert.equal(serialized.waves.length, 2);
   assert.ok(serialized.decisionTrace.some(d => d.stage === 'scheduling' && d.facts.conflicts.length));
@@ -249,7 +294,7 @@ test('stable scheduling, isolation, routing, planning and security policies', ()
     assert.ok(d.reasonCodes.includes(code));
   }
   assert.ok(prepareExecution({ tasks, forceWorktree: true }).decisionTrace.find(d => d.decision === 'use_worktree').reasonCodes.includes('WORKTREE_EXPLICIT'));
-  for (const extra of [{}, { lunaExhausted: true }, { repeatedSameFailure: true }, { modelRouting: { supportedModels: [] } }]) {
+  for (const extra of [{}, { lunaExhausted: true }, { repeatedSameFailure: true }]) {
     const result = prepareExecution({ tasks, ...extra });
     for (const route of result.modelRouting.stages) {
       const d = result.decisionTrace.find(d => d.stage === 'routing' && d.discriminator === route.stage);

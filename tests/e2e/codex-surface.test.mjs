@@ -4,10 +4,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  ALLOWED_MODELS,
   MODEL_ROUTING_POLICY,
-  fallbackToSessionInheritance,
+  failClosedModelRoute,
   resolveRoleRouting,
   routeForDifficulty,
+  validateModelSelection,
 } from '../../core/routing/index.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -154,40 +156,49 @@ test('failure-driven escalation stays in Luna before Sol and is stage-local', ()
   assert.equal(nextRoutineWorker.model, 'gpt-6-luna');
 });
 
-test('routing fails safe to session inheritance when model or effort override is unavailable', () => {
+test('routing allowlist is canonical and unavailable overrides fail closed without session inheritance', () => {
+  assert.deepEqual(ALLOWED_MODELS, ['gpt-6-luna', 'gpt-6-sol']);
+  assert.equal(MODEL_ROUTING_POLICY.fallback, 'fail-closed');
+  assert.deepEqual(validateModelSelection('gpt-6-luna', 'medium'), { model: 'gpt-6-luna', reasoningEffort: 'medium' });
+  assert.deepEqual(validateModelSelection('gpt-6-sol', 'high'), { model: 'gpt-6-sol', reasoningEffort: 'high' });
+
   const route = resolveRoleRouting('security-reviewer', {
     context: { complexSecurityReasoning: true },
   });
   assert.equal(route.model, 'gpt-6-sol');
+  assert.equal(route.inheritSessionModel, false);
 
-  const unsupportedOverride = resolveRoleRouting('security-reviewer', {
-    modelOverrideSupported: false,
-  });
-  assert.equal(unsupportedOverride.model, null);
-  assert.equal(unsupportedOverride.inheritSessionModel, true);
-  assert.equal(unsupportedOverride.fallbackReason, 'model-override-unsupported');
-
-  const missingModel = resolveRoleRouting('architect', {
-    supportedModels: ['gpt-6-luna'],
-    context: { unresolvedArchitecture: true },
-  });
-  assert.equal(missingModel.model, null);
-  assert.equal(missingModel.fallbackReason, 'model-not-available');
-
-  const missingEffort = resolveRoleRouting('implementer', {
-    routeLevel: 'luna_max',
-    supportedEffortsByModel: { 'gpt-6-luna': ['medium', 'high', 'xhigh'] },
-  });
-  assert.equal(missingEffort.model, null);
-  assert.equal(missingEffort.fallbackReason, 'reasoning-effort-not-available');
-
-  const runtimeRejected = fallbackToSessionInheritance(route);
-  assert.equal(runtimeRejected.model, null);
-  assert.equal(runtimeRejected.inheritSessionModel, true);
-  assert.equal(runtimeRejected.fallbackReason, 'runtime-model-rejected');
-
+  assert.throws(
+    () => resolveRoleRouting('security-reviewer', { modelOverrideSupported: false }),
+    error => error?.code === 'MODEL_OVERRIDE_REJECTED'
+  );
+  assert.throws(
+    () => resolveRoleRouting('architect', {
+      supportedModels: ['gpt-6-luna'],
+      context: { unresolvedArchitecture: true },
+    }),
+    error => error?.code === 'MODEL_UNAVAILABLE'
+  );
+  assert.throws(
+    () => resolveRoleRouting('implementer', {
+      routeLevel: 'luna_max',
+      supportedEffortsByModel: { 'gpt-6-luna': ['medium', 'high', 'xhigh'] },
+    }),
+    error => error?.code === 'EFFORT_NOT_ALLOWED'
+  );
+  assert.throws(
+    () => resolveRoleRouting('planner', { roleModels: { planner: 'gpt-6-astra' } }),
+    error => error?.code === 'MODEL_NOT_ALLOWED'
+  );
   assert.throws(
     () => resolveRoleRouting('planner', { roleModels: { planner: 'claude-opus-4' } }),
     /Refusing non-OpenAI-looking/
   );
+
+  const blocked = failClosedModelRoute(route);
+  assert.equal(blocked.model, 'gpt-6-sol');
+  assert.equal(blocked.reasoningEffort, 'high');
+  assert.equal(blocked.inheritSessionModel, false);
+  assert.equal(blocked.executable, false);
+  assert.equal(blocked.fallback, 'fail-closed');
 });
