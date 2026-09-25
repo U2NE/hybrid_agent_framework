@@ -119,11 +119,11 @@ This validates convergence semantics, not permission to execute the resulting pl
 
 Deterministic integration PASS.
 
-`runQualityClosure()` is exported from `core/orchestrator/index.mjs`, installed into target repositories under `.hybrid/core/orchestrator/`, and is the reusable post-integration primitive referenced by the Hybrid skill/installed AGENTS contract. It composes the existing QA callbacks, `runRepairConvergence()`, evidence completion gate, proof adapters, conditional shared-context cache, and passive observability without introducing a new agent role or canonical state. Normal no-defect/no-gap tests record zero repair calls, zero proof-acquisition calls, zero extra verifier calls, and zero browser calls.
+`runQualityClosure()` is exported from `core/orchestrator/index.mjs`, installed into target repositories under `.hybrid/core/orchestrator/`, and is the reusable post-integration primitive referenced by the Hybrid skill/installed AGENTS contract. It composes the existing QA callbacks, `runRepairConvergence()`, evidence completion gate, proof adapters, conditional shared-context cache, and passive observability without introducing a new agent role or canonical state. Normal no-defect/no-gap tests record zero repair calls, zero proof-acquisition calls, zero extra verifier calls, and zero browser calls. When a closure has an explicit current snapshot, verifier-assessed/verified runtime evidence is accepted only when `evidence.snapshot` exactly matches that snapshot; missing or stale bindings remain a proof gap. Snapshot-agnostic legacy behavior is retained only when no current snapshot context exists, and Tier 0 lightweight completion is unchanged.
 
 ### Case G — review → repair → review convergence
 
-Authenticated semantic PASS through the generic `runQualityClosure()` production primitive.
+Authenticated semantic PASS through the framework-source generic `runQualityClosure()` production primitive. This case validates primitive behavior directly; it does not by itself attest installed-Lead wiring.
 
 - the disposable R1 fixture contained an objectively reproducible null-input defect; the focused Node test exited nonzero with a `TypeError`;
 - independent authenticated Tester and Code Reviewer workers overlapped, ran the focused test, and both reported the same blocking `AC-001` defect with concrete evidence;
@@ -138,7 +138,7 @@ The semantic validator rejects exit-zero-only reports and requires the original 
 
 ### Case H — proof-gap QE without a QE agent
 
-Authenticated semantic PASS through the generic `runQualityClosure()` production primitive.
+Authenticated semantic PASS through the framework-source generic `runQualityClosure()` production primitive. This case validates primitive behavior directly; it does not by itself attest installed-Lead wiring.
 
 - the initial completion gate refused to verify `AC-001` because required CLI runtime proof was absent;
 - the first authenticated Luna-medium Verifier evaluated only supplied evidence, executed no command, and returned `FAIL / PROOF_GAP`;
@@ -150,6 +150,20 @@ Authenticated semantic PASS through the generic `runQualityClosure()` production
 - `qeAgentsSpawned=0` and `browserUsed=false`.
 
 This proves conditional proof acquisition. It does not imply that browser proof can be replaced by CLI proof when browser interaction is intrinsic to the acceptance criterion; an unavailable required browser provider remains a proof gap.
+
+### Case I — installed Lead production-primitive attestation
+
+Authenticated semantic PASS in a real disposable installed project.
+
+- the smoke created and initialized a temporary Git repository, installed Hybrid through the real installer, and committed the baseline before Lead execution;
+- the authenticated Codex Lead ran with the disposable project as its working directory and followed the installed `AGENTS.md` / Hybrid skill contract;
+- the framework smoke harness did not import or call framework-source `runQualityClosure()` directly;
+- the Lead-created action imported `runQualityClosure` from `../.hybrid/core/orchestrator/index.mjs`, and installed-core integrity remained unchanged;
+- passive runtime artifacts contained five lifecycle events: QA start/end, Verifier start/end, and `completion` PASS; each event identified `primitive: "runQualityClosure"` and carried the expected integrated snapshot;
+- the semantic validator requires the actual Lead action command to exit zero, rejects framework-source bypass, rejects fake success with no events, rejects a missing completion event, and rejects recursive `spawn_agent` delegation;
+- exit code 0 or a Lead success claim without the installed runtime artifacts cannot PASS.
+
+Case I attests the installed Hybrid contract → installed production primitive → emitted quality lifecycle boundary. It does not attest every future arbitrary Lead behavior or the backend serving-model identity.
 
 ## Still intentionally pending
 
