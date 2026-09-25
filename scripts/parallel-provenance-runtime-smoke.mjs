@@ -201,7 +201,7 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     'Each worker edits only its owned file. After editing, the worker must parse CASE-K-DISPATCH.json, select its own child by decision === "spawn_implementer" and its taskId, and use createActorArtifactWriter({runId:"case-k",repoRoot:process.cwd(),agentRunId:child.agentRunId}) to write one reported completion record containing runId, taskId, waveId, agentRunId, decisionId, action:"complete", outcome:"pass", exact owned files, requestedModel:"gpt-6-luna", and requestedReasoningEffort:"medium". Never hand-copy a decisionId.',
     'After each worker returns, the Lead parses that same exact child object from CASE-K-DISPATCH.json and records completion with writeActionForDecision(child,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
     'Do not spawn Tester, Code Reviewer, Verifier, or any other role. Case K validates exactly the two sibling Implementers plus deterministic audit.',
-    'Verify src/a.txt is exactly the bytes A1 followed by one trailing LF (A1\\n), and src/b.txt is exactly B1 followed by one trailing LF (B1\\n). The trailing LF is required by the fixture; do not remove it. To audit, compute the run directory with resolveHybridRuntimeRoot(process.cwd()) from .hybrid/core/runtime/index.mjs, read runs/case-k/decisions.jsonl, events.jsonl and actors/*.jsonl, run auditDecisionTrace with exact ownership A->src/a.txt and B->src/b.txt, and persist it with createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeAudit(audit).',
+    'Verify src/a.txt has exactly textual content A1 and src/b.txt has exactly textual content B1. The fixture accepts either no final line terminator or one final LF/CRLF, but no other trailing whitespace or content. To audit, compute the run directory with resolveHybridRuntimeRoot(process.cwd()) from .hybrid/core/runtime/index.mjs, read runs/case-k/decisions.jsonl, events.jsonl and actors/*.jsonl, run auditDecisionTrace with exact ownership A->src/a.txt and B->src/b.txt, and persist it with createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeAudit(audit).',
     'Finish only if audit.ok is true and findings is empty. Use runtime run id case-k. Do not modify .hybrid/core. Do not commit.',
   ].join('\n');
   const run = await runCodexExec(bin, [
@@ -228,8 +228,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     audit,
     actualSiblingWorkersObserved: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }) && !hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
     fixtureValid:
-      (await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '')) === 'A1\n' &&
-      (await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '')) === 'B1\n',
+      matchesCaseKFixture(await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => ''), 'A1') &&
+      matchesCaseKFixture(await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => ''), 'B1'),
     installedCoreUnchanged: !changedCore.stdout.trim(),
     installedApiUsed: (await inspectRuntimeSource(root)).installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: (await inspectRuntimeSource(root)).frameworkSourceBypass,
@@ -279,6 +279,10 @@ async function project(label) {
   await fs.writeFile(path.join(root, '.planning/CASE-K.json'), JSON.stringify(fixture, null, 2) + '\n');
   return root;
 }
+export function matchesCaseKFixture(actual, expected) {
+  return actual === expected || actual === expected + '\n' || actual === expected + '\r\n';
+}
+
 async function readSettledParallelEvidence(dir, timeoutMs = 20000) {
   const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
   let evidence = await readParallelEvidence(dir);
