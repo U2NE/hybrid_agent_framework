@@ -61,6 +61,11 @@ try {
           attemptId
         );
         print(result);
+      } else if (sub === 'extend') {
+        const inputPath = required(args[2], 'lease extension JSON path');
+        const root = path.resolve(args[3] || '.');
+        const input = await readJsonFile(inputPath);
+        print(await new ExecutionRunStore(root, runId).extendTaskResources(input));
       } else if (sub === 'release') {
         const leaseId = required(args[2], 'lease id');
         const leaseToken = required(args[3], 'lease token');
@@ -83,7 +88,7 @@ try {
         print({ valid: true, leaseId: authorization.leaseId });
       } else {
         throw new Error(
-          'usage: hybrid lease <acquire|release|list|verify> <run-id> ...'
+          'usage: hybrid lease <acquire|extend|release|list|verify> <run-id> ...'
         );
       }
       break;
@@ -290,6 +295,7 @@ function help() {
     '  hybrid schedule <PLAN.md|plan.json>',
     '  hybrid prepare <input.json>',
     '  hybrid lease acquire <run-id> <task-id> <attempt-id> [project-root]',
+    '  hybrid lease extend <run-id> <extension.json> [project-root]',
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',
     '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
     '  hybrid lease list <run-id> [project-root]',

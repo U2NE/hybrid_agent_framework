@@ -128,6 +128,219 @@ test('graph advancement is fenced by active dispatch leases and succeeds after r
   );
 });
 
+test('runtime lease extension auto-publishes a non-material child when the run is drained', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+
+  const extended = await runStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: [{ key: 'contract:expanded', mode: 'exclusive' }],
+  });
+
+  assert.equal(extended.status, 'extended');
+  assert.equal(extended.applied, true);
+  assert.equal(extended.graph.revisionId, 'G2');
+  assert.equal(extended.graph.parentDescriptorHash, graph.descriptorHash);
+  assert.equal(extended.graph.approvalScopeHash, graph.approvalScopeHash);
+  assert.deepEqual(
+    extended.graph.nodes.find((node) => node.id === 'task-a').resources,
+    [{ key: 'contract:expanded', mode: 'exclusive' }]
+  );
+  assert.equal(
+    (await runStore.loadGraph()).descriptorHash,
+    extended.graph.descriptorHash
+  );
+
+  const noOp = await runStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: [{ key: 'contract:expanded', mode: 'exclusive' }],
+  });
+  assert.equal(noOp.status, 'no-op');
+  assert.equal(noOp.applied, false);
+  assert.equal(noOp.graph.descriptorHash, extended.graph.descriptorHash);
+});
+
+test('runtime lease extension drains active old-revision leases before publishing and reacquiring', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+
+  const active = await leaseStore.acquire(graph, 'task-a', 'attempt-before-extension');
+  const blocked = await runStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: ['contract:expanded'],
+  });
+
+  assert.equal(blocked.status, 'drain-required');
+  assert.equal(blocked.applied, false);
+  assert.equal(blocked.currentDescriptorHash, graph.descriptorHash);
+  assert.equal(blocked.proposedRevisionId, 'G2');
+  assert.equal(blocked.activeLeases.length, 1);
+  assert.equal(blocked.activeLeases[0].leaseId, active.authorization.leaseId);
+  assert.equal(
+    (await runStore.loadGraph()).descriptorHash,
+    graph.descriptorHash
+  );
+
+  await leaseStore.release(
+    active.authorization.leaseId,
+    active.authorization.leaseToken,
+    { outcome: 'aborted-and-reconciled-before-resource-extension' }
+  );
+
+  const extended = await runStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: ['contract:expanded'],
+  });
+  assert.equal(extended.status, 'extended');
+  assert.equal(extended.graph.revisionId, 'G2');
+
+  const reacquired = await leaseStore.acquire(
+    extended.graph,
+    'task-a',
+    'attempt-after-extension'
+  );
+  assert.deepEqual(
+    reacquired.authorization.taskContract.resources,
+    [{ key: 'contract:expanded', mode: 'exclusive' }]
+  );
+
+  await assert.rejects(
+    () => leaseStore.assertAuthorization(
+      extended.graph,
+      active.authorization
+    ),
+    (error) => error.code === 'DISPATCH_AUTH_GRAPH_MISMATCH'
+  );
+});
+
+test('runtime lease extension routes material semantics to user re-approval without graph mutation', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+
+  const result = await runStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: ['schema:database'],
+    schemaMeaningChanged: true,
+  });
+
+  assert.equal(result.status, 'user-approval-required');
+  assert.equal(result.applied, false);
+  assert.equal(result.materialRevisionRequired, true);
+  assert.deepEqual(result.reasons, ['SCHEMA_MEANING_CHANGE']);
+  assert.equal(result.graph.descriptorHash, graph.descriptorHash);
+  assert.equal(
+    (await runStore.loadGraph()).descriptorHash,
+    graph.descriptorHash
+  );
+});
+
+test('runtime lease extension cannot mutate file/read/write contracts or choose revision ids', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+
+  for (const input of [
+    { taskId: 'task-a', resources: ['contract:x'], files_modified: ['src/b.js'] },
+    { taskId: 'task-a', resources: ['contract:x'], writes: ['src/b.js'] },
+    { taskId: 'task-a', resources: ['contract:x'], reads: ['src/b.js'] },
+    { taskId: 'task-a', resources: ['contract:x'], revisionId: 'custom-revision' },
+    { taskId: 'task-a', resources: ['contract:x'], plan: { tasks: [] } },
+    { taskId: 'task-a', resources: ['contract:x'], spec: { goal: 'changed' } },
+  ]) {
+    await assert.rejects(
+      () => runStore.extendTaskResources(input),
+      (error) =>
+        error instanceof TransitionError &&
+        error.code === 'LEASE_EXTENSION_CONTRACT_CHANGE_FORBIDDEN'
+    );
+  }
+
+  assert.equal((await runStore.loadGraph()).descriptorHash, graph.descriptorHash);
+});
+
+test('concurrent identical runtime lease extensions converge on one child descriptor', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const firstStore = new ExecutionRunStore(root, graph.runId);
+  const secondStore = new ExecutionRunStore(root, graph.runId);
+  await firstStore.initializeGraph(graph);
+
+  const [left, right] = await Promise.all([
+    firstStore.extendTaskResources({
+      taskId: 'task-a',
+      resources: ['contract:race'],
+    }),
+    secondStore.extendTaskResources({
+      taskId: 'task-a',
+      resources: ['contract:race'],
+    }),
+  ]);
+
+  assert.deepEqual(
+    [left.status, right.status].sort(),
+    ['extended', 'replayed']
+  );
+  assert.equal(left.graph.descriptorHash, right.graph.descriptorHash);
+  assert.equal(
+    (await firstStore.loadGraph()).descriptorHash,
+    left.graph.descriptorHash
+  );
+});
+
+test('concurrent different runtime lease extensions fence stale parents and converge by retry', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const firstStore = new ExecutionRunStore(root, graph.runId);
+  const secondStore = new ExecutionRunStore(root, graph.runId);
+  await firstStore.initializeGraph(graph);
+
+  const [left, right] = await Promise.all([
+    firstStore.extendTaskResources({
+      taskId: 'task-a',
+      resources: ['contract:left'],
+    }),
+    secondStore.extendTaskResources({
+      taskId: 'task-a',
+      resources: ['contract:right'],
+    }),
+  ]);
+
+  const winner = [left, right].find((item) => item.status === 'extended');
+  const stale = [left, right].find((item) => item.status === 'retry-required');
+  assert.ok(winner);
+  assert.ok(stale);
+  assert.equal(stale.graph.descriptorHash, winner.graph.descriptorHash);
+  assert.equal(stale.attemptedParentDescriptorHash, graph.descriptorHash);
+
+  const missingKey = winner.graph.nodes
+    .find((node) => node.id === 'task-a')
+    .resources.some((resource) => resource.key === 'contract:left')
+      ? 'contract:right'
+      : 'contract:left';
+
+  const retried = await firstStore.extendTaskResources({
+    taskId: 'task-a',
+    resources: [missingKey],
+  });
+  assert.equal(retried.status, 'extended');
+  assert.equal(retried.graph.revisionId, 'G3');
+  assert.deepEqual(
+    retried.graph.nodes
+      .find((node) => node.id === 'task-a')
+      .resources.map((resource) => resource.key)
+      .sort(),
+    ['contract:left', 'contract:right']
+  );
+});
+
 test('approved material child cannot publish across an active parent lease', async () => {
   const root = await tempProject();
   const parent = graphFor();

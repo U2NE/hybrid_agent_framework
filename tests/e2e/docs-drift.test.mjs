@@ -36,6 +36,7 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   const runtimeDoc = await fs.readFile(path.join(root, 'docs/architecture/RUNTIME-SMOKE.md'), 'utf8');
   const routingDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-ROUTING.md'), 'utf8');
   const budgetDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-BUDGET.md'), 'utf8');
+  const leaseDoc = await fs.readFile(path.join(root, 'docs/architecture/RESOURCE-LEASES.md'), 'utf8');
 
   assert.equal(policy.default_route, 'luna_medium');
   assert.equal(policy.profiles.moderate, 'luna_high');
@@ -58,6 +59,10 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(routingDoc, /default automatic cap is \*\*3 unique Sol stage-attempt reservations per run\*\*/i);
   assert.match(routingDoc, /MODEL_BUDGET_USER_APPROVAL_REQUIRED/);
   assert.match(budgetDoc, /Lead\/worker agents must not self-issue it/i);
+  assert.match(leaseDoc, /Runtime resource extension barrier/i);
+  assert.match(leaseDoc, /drain-required/);
+  assert.match(leaseDoc, /new attempt/i);
+  assert.match(leaseDoc, /never has its dispatch authorization or sealed task contract mutated in place/i);
 
   for (const alias of ['.agents/skills/plan/SKILL.md', '.codex/skills/plan/SKILL.md']) {
     const stat = await fs.lstat(path.join(root, alias));

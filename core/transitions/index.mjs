@@ -1,7 +1,10 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { validateSealedExecutionGraph } from '../execution-graph/index.mjs';
+import {
+  requestLeaseExtension,
+  validateSealedExecutionGraph,
+} from '../execution-graph/index.mjs';
 import { ResourceLeaseStore } from '../leases/index.mjs';
 
 export const TRANSITION_SCHEMA = 'hybrid-transition/v1';
@@ -106,6 +109,91 @@ export class ExecutionRunStore {
       await atomicJsonWrite(this.graphPath, graph);
       return { status: 'advanced', graph, path: this.graphPath };
     });
+  }
+
+  async extendTaskResources(input = {}) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new TransitionError(
+        'lease extension input must be an object',
+        'INVALID_LEASE_EXTENSION'
+      );
+    }
+
+    const forbiddenFields = [
+      'revisionId',
+      'plan',
+      'spec',
+      'files_modified',
+      'filesModified',
+      'writes',
+      'reads',
+    ].filter((field) => Object.prototype.hasOwnProperty.call(input, field));
+
+    if (forbiddenFields.length) {
+      throw new TransitionError(
+        'runtime lease extension may add semantic resources only; contract changes require a material revision',
+        'LEASE_EXTENSION_CONTRACT_CHANGE_FORBIDDEN',
+        { forbiddenFields }
+      );
+    }
+
+    const current = await this.loadGraph();
+    const proposal = requestLeaseExtension(current, input);
+
+    if (!proposal.applied) {
+      return {
+        status: proposal.status,
+        applied: false,
+        reasons: [...(proposal.reasons || [])],
+        materialRevisionRequired: proposal.status === 'user-approval-required',
+        graph: current,
+      };
+    }
+
+    try {
+      const advanced = await this.advanceGraph(proposal.graph);
+      return {
+        status: advanced.status === 'advanced' ? 'extended' : 'replayed',
+        applied: advanced.status === 'advanced',
+        requiresReschedule: proposal.requiresReschedule,
+        conflicts: [...proposal.conflicts],
+        parentDescriptorHash: current.descriptorHash,
+        graph: advanced.graph,
+      };
+    } catch (error) {
+      if (
+        error instanceof TransitionError &&
+        error.code === 'GRAPH_ADVANCE_ACTIVE_LEASES'
+      ) {
+        return {
+          status: 'drain-required',
+          applied: false,
+          requiresReschedule: true,
+          conflicts: [...proposal.conflicts],
+          currentDescriptorHash: current.descriptorHash,
+          proposedDescriptorHash: proposal.graph.descriptorHash,
+          proposedRevisionId: proposal.graph.revisionId,
+          activeLeases: structuredClone(error.details.activeLeases || []),
+          graph: current,
+        };
+      }
+
+      if (
+        error instanceof TransitionError &&
+        error.code === 'GRAPH_FENCED'
+      ) {
+        const latest = await this.loadGraph();
+        return {
+          status: 'retry-required',
+          applied: false,
+          currentDescriptorHash: latest.descriptorHash,
+          attemptedParentDescriptorHash: current.descriptorHash,
+          graph: latest,
+        };
+      }
+
+      throw error;
+    }
   }
 
   async loadGraphRevision(descriptorHash) {

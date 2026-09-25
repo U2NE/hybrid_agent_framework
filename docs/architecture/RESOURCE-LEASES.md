@@ -52,6 +52,42 @@ Inside that lock, graph advancement re-reads the current graph and active lease 
 
 This is intentionally stronger than a separate “check then write”: holding the same lock across active-lease inspection and graph persistence removes the acquire-vs-revision TOCTOU window.
 
+## Runtime resource extension barrier
+
+An already-running task never has its dispatch authorization or sealed task contract mutated in place.
+
+If execution discovers an additional **non-material semantic resource** requirement, the Lead calls:
+
+```text
+node .hybrid/bin/hybrid.mjs lease extend <run-id> <extension.json> [project-root]
+```
+
+with an input such as:
+
+```json
+{
+  "taskId": "implement-auth",
+  "resources": [
+    { "key": "contract:session", "mode": "exclusive" }
+  ]
+}
+```
+
+The runtime protocol is a graph-revision barrier:
+
+1. compute a deterministic non-material child graph from the current sealed graph;
+2. if any old-revision lease is active, return `drain-required` and leave the current graph unchanged;
+3. the Lead must complete/reconcile or explicitly abort those attempts and durably release their leases;
+4. retry the same extension request;
+5. publish the child graph under the normal graph-revision fence;
+6. acquire a **new attempt** against the child graph before redispatch.
+
+No active authorization is enlarged in place. This preserves the invariant that every dispatch authorization is bound to one immutable descriptor hash.
+
+Identical concurrent extension requests converge on one child descriptor. Different concurrent extensions cannot overwrite each other: the stale request receives `retry-required` and must recompute from the latest graph.
+
+Runtime lease extension may add only semantic `resources`. It rejects caller-controlled `revisionId`, `files_modified`, `writes`, `reads`, `plan`, or `spec`. File-contract changes and product/API/schema/feature-scope/requirement/security semantic changes must go through the material revision approval flow. Material flags on an extension request return `user-approval-required` without mutating the graph.
+
 ## Release and recovery
 
 Release requires the lease token and is fingerprinted by its result. Replaying the same release is idempotent. Releasing the same lease with a contradictory result is fenced.
