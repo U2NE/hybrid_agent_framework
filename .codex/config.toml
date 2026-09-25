@@ -53,6 +53,10 @@ config_file = "agents/tester.toml"
 description = "Independent code reviewer"
 config_file = "agents/code-reviewer.toml"
 
+[agents."adversarial-reviewer"]
+description = "Independent adversarial break-it reviewer"
+config_file = "agents/adversarial-reviewer.toml"
+
 [agents."security-reviewer"]
 description = "Conditional security reviewer"
 config_file = "agents/security-reviewer.toml"

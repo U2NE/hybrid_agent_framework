@@ -13,6 +13,7 @@ test('all registered Hybrid roles have deterministic capability policies', () =>
   assert.deepEqual(
     Object.keys(ROLE_CAPABILITY_POLICY).sort(),
     [
+      'adversarial-reviewer',
       'architect',
       'code-reviewer',
       'design-architect',
@@ -42,7 +43,7 @@ test('unknown roles fail closed instead of inheriting a permissive default', () 
 });
 
 test('planner reviewer tester and verifier cannot own mutating tasks', () => {
-  for (const role of ['planner', 'architect', 'plan-auditor', 'tester', 'code-reviewer', 'security-reviewer', 'verifier']) {
+  for (const role of ['planner', 'architect', 'plan-auditor', 'tester', 'code-reviewer', 'adversarial-reviewer', 'security-reviewer', 'verifier']) {
     assert.throws(
       () => validateRoleTaskContract({
         id: 'mutate-' + role,

@@ -7,6 +7,7 @@ export const ROLE_CAPABILITY_POLICY = Object.freeze({
   'plan-auditor': readOnlyPolicy(['fs.read', 'code.search', 'review.return']),
   tester: readOnlyPolicy(['fs.read', 'process.test', 'review.return']),
   'code-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'review.return']),
+  'adversarial-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'review.return']),
   'security-reviewer': readOnlyPolicy([
     'fs.read',
     'code.search',

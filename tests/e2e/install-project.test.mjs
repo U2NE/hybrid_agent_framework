@@ -208,6 +208,9 @@ test('installer preserves project-owned ordinary agent files and installs Hybrid
   assert.match(installedDesignExecutor, /^sandbox_mode = "workspace-write"$/m);
   const installedDesignReviewer = await fs.readFile(path.join(dir, 'hybrid-design-reviewer.toml'), 'utf8');
   assert.match(installedDesignReviewer, /^sandbox_mode = "read-only"$/m);
+  const installedAdversarialReviewer = await fs.readFile(path.join(dir, 'hybrid-adversarial-reviewer.toml'), 'utf8');
+  assert.match(installedAdversarialReviewer, /^name = "hybrid-adversarial-reviewer"$/m);
+  assert.match(installedAdversarialReviewer, /^sandbox_mode = "read-only"$/m);
 });
 
 test('installer refuses to overwrite a pre-existing reserved Hybrid agent file on first install', async () => {

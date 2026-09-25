@@ -32,6 +32,8 @@ test('Tier 1 bounded default avoids scout planner tester reviewer and knowledge 
   assert.equal(result.needs.planning, false);
   assert.equal(result.needs.tester, false);
   assert.equal(result.needs.review, false);
+  assert.equal(result.needs.adversarialReview, false);
+  assert.equal(result.pipeline.includes('adversarial-reviewer'), false);
   assert.equal(result.needs.knowledge, false);
   assert.equal(route(result, 'implementer').routeLevel, 'luna_medium');
   assert.equal(route(result, 'verifier').routeLevel, 'luna_medium');
@@ -159,6 +161,38 @@ test('Tier 1 conditionally adds planning, tester, and reviewer only when evidenc
   assert.deepEqual(result.waves.map((wave) => wave.map((task) => task.id)), [['parser'], ['tests']]);
 });
 
+test('bounded high-regression-risk work adds adversarial review without changing implementation ownership', () => {
+  const result = prepareExecution({
+    task: {
+      request: 'Change cache retry state transition',
+      files: ['src/cache/retry.js'],
+    },
+    request: 'Change cache retry state transition',
+    meaningfulLogicChange: true,
+    highRegressionRisk: true,
+    tasks: [{
+      id: 'retry',
+      owner: 'implementer',
+      depends_on: [],
+      files_modified: ['src/cache/retry.js'],
+    }],
+  });
+
+  assert.equal(result.classification.name, 'bounded');
+  assert.equal(result.needs.adversarialReview, true);
+  assert.ok(result.pipeline.includes('code-reviewer'));
+  assert.ok(result.pipeline.includes('adversarial-reviewer'));
+  assert.equal(result.pipeline.filter((stage) => stage === 'implementer').length, 1);
+  assert.equal(route(result, 'adversarial-reviewer').routeLevel, 'luna_max');
+  assert.equal(route(result, 'adversarial-reviewer').modelTier, 'luna');
+  const decision = result.decisionTrace.find(
+    (item) => item.discriminator === 'adversarial-reviewer'
+  );
+  assert.equal(decision.decision, 'activate');
+  assert.equal(decision.policy.rule, 'review.adversarial-activation');
+  assert.ok(decision.reasonCodes.includes('ADVERSARIAL_REVIEW_REQUIRED'));
+});
+
 test('Tier 2 ordinary complex work keeps council conditional and skips knowledge without durable change', () => {
   const result = prepareExecution({
     task: {
@@ -184,10 +218,12 @@ test('Tier 2 ordinary complex work keeps council conditional and skips knowledge
     'implementer',
     'tester',
     'code-reviewer',
+    'adversarial-reviewer',
     'verifier',
     'integrate',
     'full-test',
   ]);
+  assert.equal(route(result, 'adversarial-reviewer').routeLevel, 'luna_xhigh');
   assert.equal(result.pipeline.includes('architect'), false);
   assert.equal(result.pipeline.includes('knowledge-synthesizer'), false);
 });
@@ -237,12 +273,14 @@ test('Tier 3 ambiguous work retains clarification, council, and full quality flo
     'implementer',
     'tester',
     'code-reviewer',
+    'adversarial-reviewer',
     'verifier',
     'integrate',
     'full-test',
   ]) {
     assert.ok(result.pipeline.includes(stage), stage);
   }
+  assert.equal(route(result, 'adversarial-reviewer').routeLevel, 'luna_max');
 });
 
 test('bounded security-sensitive work activates quality lanes but starts security reviewer at Luna max', () => {
@@ -252,6 +290,8 @@ test('bounded security-sensitive work activates quality lanes but starts securit
     tasks: [{ id: 'auth', depends_on: [], files_modified: ['src/auth.js'] }],
   });
   assert.equal(result.securityReview, true);
+  assert.equal(result.needs.adversarialReview, false);
+  assert.equal(result.pipeline.includes('adversarial-reviewer'), false);
   for (const stage of ['tester', 'code-reviewer', 'security-reviewer', 'verifier']) {
     assert.ok(result.pipeline.includes(stage));
   }

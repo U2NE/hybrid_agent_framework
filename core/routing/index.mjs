@@ -287,6 +287,25 @@ function baseRouteFor(role, context, policy, reasons) {
     return profile('moderate', 'independent-review');
   }
 
+  if (role === 'adversarial-reviewer') {
+    if (
+      importantArchitecture ||
+      securitySensitive ||
+      context.highRegressionRisk === true
+    ) {
+      return profile('very_hard', 'high-risk-adversarial-review');
+    }
+    if (
+      difficultReview ||
+      architectural ||
+      classification === 'complex' ||
+      classification === 'ambiguous'
+    ) {
+      return profile('hard', 'adversarial-review');
+    }
+    return profile('moderate', 'bounded-adversarial-review');
+  }
+
   if (role === 'debugger') {
     if (complexDebugging) return profile('hard', 'complex-cross-module-debugging');
     return profile('moderate', 'debugging');

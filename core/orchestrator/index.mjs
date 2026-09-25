@@ -22,6 +22,7 @@ const ROUTABLE_STAGES = new Set([
   'implementer',
   'tester',
   'code-reviewer',
+  'adversarial-reviewer',
   'security-reviewer',
   'verifier',
   'knowledge-synthesizer',
@@ -55,6 +56,7 @@ export function derivePipeline({
     stages.push(...needs.implementationRoles);
     if (needs.tester) stages.push('tester');
     if (needs.review) stages.push('code-reviewer');
+    if (needs.adversarialReview) stages.push('adversarial-reviewer');
     if (needs.designReviewer) stages.push('design-reviewer');
     if (securityReview) stages.push('security-reviewer');
     stages.push('verifier');
@@ -81,7 +83,7 @@ export function derivePipeline({
     stages.push('architect', 'plan-auditor');
   }
 
-  stages.push('scheduler', ...needs.implementationRoles, 'tester', 'code-reviewer');
+  stages.push('scheduler', ...needs.implementationRoles, 'tester', 'code-reviewer', 'adversarial-reviewer');
   if (needs.designReviewer) stages.push('design-reviewer');
   if (securityReview) stages.push('security-reviewer');
   stages.push('verifier', 'integrate', 'full-test');
@@ -274,6 +276,13 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
       input.meaningfulLogicChange === true ||
       securityReview === true ||
       tier >= TaskTier.COMPLEX,
+    adversarialReview:
+      tier >= TaskTier.COMPLEX ||
+      input.adversarialReview === true ||
+      input.highRegressionRisk === true ||
+      input.concurrencyCritical === true ||
+      input.dataIntegrityRisk === true ||
+      input.failureProneBoundary === true,
     council:
       input.needsCouncil === true ||
       routingContext.architecturalChange === true ||
@@ -335,6 +344,11 @@ export function deriveRoutingContext(input, classification, requirements, securi
       ),
     crossModuleDebugging: input.crossModuleDebugging === true,
     difficultReview: input.difficultReview === true,
+    highRegressionRisk:
+      input.highRegressionRisk === true ||
+      input.concurrencyCritical === true ||
+      input.dataIntegrityRisk === true ||
+      input.failureProneBoundary === true,
     importantArchitecturalDecision: input.importantArchitecturalDecision === true,
     moderateImplementation:
       input.moderateImplementation === true || input.taskDifficulty === 'moderate',
@@ -397,11 +411,11 @@ function executionDecisions(input, prepared) {
   const { classification, pipeline, isolationPlan, modelRouting, securityAssessment, designAssessment } = prepared;
   const tierCode = ['TIER0_TRIVIAL', 'TIER1_BOUNDED', 'TIER2_COMPLEX', 'TIER3_AMBIGUOUS'][classification.tier];
   const root = add({ stage: 'classification', decision: 'classify_tier_' + classification.tier, policy: { rule: 'classification.tier' }, facts: { tier: classification.tier, evidence: classification.evidence }, reasonCodes: [tierCode] });
-  for (const role of ['planner', 'scout', 'researcher', 'design-architect', 'implementer', 'design-executor', 'tester', 'code-reviewer', 'design-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
+  for (const role of ['planner', 'scout', 'researcher', 'design-architect', 'implementer', 'design-executor', 'tester', 'code-reviewer', 'adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
     const stage =
       ['planner', 'architect', 'plan-auditor', 'design-architect'].includes(role)
         ? 'planning'
-        : ['tester', 'code-reviewer', 'design-reviewer', 'security-reviewer', 'verifier'].includes(role)
+        : ['tester', 'code-reviewer', 'adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier'].includes(role)
           ? 'review'
           : 'dispatch';
     const designRole = ['design-architect', 'design-executor', 'design-reviewer'].includes(role);
@@ -409,6 +423,8 @@ function executionDecisions(input, prepared) {
       policy: {
         rule: role === 'security-reviewer'
           ? 'review.security-activation'
+          : role === 'adversarial-reviewer'
+            ? 'review.adversarial-activation'
           : designRole
             ? 'design.conditional-lane'
             : ['architect', 'plan-auditor'].includes(role)
@@ -419,6 +435,8 @@ function executionDecisions(input, prepared) {
       facts: { targetRole: role, activated: pipeline.includes(role), tier: classification.tier },
       reasonCodes: role === 'security-reviewer'
         ? securityAssessment.reasonCodes
+        : role === 'adversarial-reviewer'
+          ? (pipeline.includes(role) ? ['ADVERSARIAL_REVIEW_REQUIRED'] : [])
         : designRole
           ? (designAssessment?.reasonCodes || [])
           : [] });
