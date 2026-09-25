@@ -186,10 +186,9 @@ test('installer preserves project-owned ordinary agent files and installs Hybrid
     await fs.readFile(path.join(dir, 'hybrid-scout.toml'), 'utf8'),
     /^name = "hybrid-scout"$/m
   );
-  assert.match(
-    await fs.readFile(path.join(dir, 'hybrid-planner.toml'), 'utf8'),
-    /^name = "hybrid-planner"$/m
-  );
+  const installedPlanner = await fs.readFile(path.join(dir, 'hybrid-planner.toml'), 'utf8');
+  assert.match(installedPlanner, /^name = "hybrid-planner"$/m);
+  assert.match(installedPlanner, /^sandbox_mode = "read-only"$/m);
 });
 
 test('installer refuses to overwrite a pre-existing reserved Hybrid agent file on first install', async () => {

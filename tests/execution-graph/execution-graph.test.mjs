@@ -55,6 +55,62 @@ test('approved plan seals into a deterministic hash-bound execution graph', () =
   assert.equal(validateSealedExecutionGraph(first), true);
 });
 
+test('sealed graph carries deterministic role capability grants', () => {
+  const graph = sealExecutionPlan(plan, {
+    runId: 'run-capabilities',
+    approvalScopeHash: 'approval-hash',
+  });
+  const api = graph.nodes.find((node) => node.id === 'api');
+  const verifier = graph.nodes.find((node) => node.id === 'verify-final');
+
+  assert.deepEqual(api.capabilityGrant, {
+    sandboxMode: 'workspace-write',
+    writeScope: 'leased-task',
+    capabilities: ['fs.read', 'fs.write.leased', 'process.execute'],
+  });
+  assert.equal(verifier.capabilityGrant.sandboxMode, 'read-only');
+  assert.equal(verifier.capabilityGrant.writeScope, 'none');
+});
+
+test('read-only roles cannot be sealed as mutating execution owners', () => {
+  for (const owner of ['planner', 'code-reviewer', 'verifier']) {
+    assert.throws(
+      () => sealExecutionPlan({
+        tasks: [{
+          id: 'bad-' + owner,
+          owner,
+          files_modified: ['src/a.js'],
+          depends_on: [],
+        }],
+      }, {
+        runId: 'run-' + owner,
+        approvalScopeHash: 'approval-hash',
+      }),
+      (error) => error?.code === 'ROLE_WRITE_DENIED'
+    );
+  }
+});
+
+test('capability grant tampering fails sealed graph validation even after rehash is absent', () => {
+  const graph = sealExecutionPlan(plan, {
+    runId: 'run-cap-tamper',
+    approvalScopeHash: 'approval-hash',
+  });
+  const tampered = structuredClone(graph);
+  const api = tampered.nodes.find((node) => node.id === 'api');
+  api.capabilityGrant.capabilities.push('network.write');
+
+  assert.throws(
+    () => validateSealedExecutionGraph(tampered),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.details.errors.some((item) =>
+        item.includes('capability policy violation: api') ||
+        item.includes('capability grant mismatch: api')
+      )
+  );
+});
+
 test('execution sealing fails closed without an approval scope', () => {
   assert.throws(
     () => sealExecutionPlan(plan, { runId: 'run-1' }),

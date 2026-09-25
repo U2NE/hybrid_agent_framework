@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateRoleSandbox } from '../../core/capabilities/index.mjs';
 import {
   ALLOWED_MODELS,
   MODEL_ROUTING_POLICY,
@@ -36,12 +37,16 @@ test('standalone role config layers carry identity, inherit routed model, and fo
     const text = await fs.readFile(path.join(dir, entry), 'utf8');
     assert.match(text, new RegExp('^name = "' + role.replace(/[.*+?^$()|[\]\\]/g, '\\$&') + '"$', 'm'));
     assert.match(text, /^description = ".+"$/m);
-    assert.match(text, /^sandbox_mode = "(read-only|workspace-write)"$/m);
+    const sandbox = text.match(/^sandbox_mode = "(read-only|workspace-write)"$/m)?.[1];
+    assert.ok(sandbox);
+    assert.equal(validateRoleSandbox(role, sandbox), true);
     assert.match(text, /^developer_instructions = '''$/m);
     assert.match(text, /Do not spawn or delegate to another subagent/);
     assert.doesNotMatch(text, /^model\s*=/m);
     assert.doesNotMatch(text, /^model_reasoning_effort\s*=/m);
   }
+  const planner = await fs.readFile(path.join(dir, 'planner.toml'), 'utf8');
+  assert.match(planner, /^sandbox_mode = "read-only"$/m);
 });
 
 test('repository-local skills have one canonical source and valid frontmatter', async () => {

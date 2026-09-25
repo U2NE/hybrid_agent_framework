@@ -4,6 +4,7 @@ import {
   normalizeTask,
   tasksConflict,
 } from '../scheduler/index.mjs';
+import { roleCapabilityPolicy, validateRoleTaskContract } from '../capabilities/index.mjs';
 
 export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v2';
 
@@ -36,6 +37,9 @@ export function sealExecutionPlan(plan, options = {}) {
   if (!revisionId) throw new ExecutionGraphError('revisionId is required', 'INVALID_REVISION');
   const approvalScopeHash = resolveApprovalScopeHash(options);
   const normalizedTasks = tasks.map((task) => normalizeTask(task));
+  const capabilityContracts = new Map(
+    normalizedTasks.map((task) => [task.id, validateRoleTaskContract(task)])
+  );
   buildExecutionWaves(normalizedTasks);
 
   const terminalVerificationNodeId = String(
@@ -55,7 +59,7 @@ export function sealExecutionPlan(plan, options = {}) {
   }
 
   const taskNodes = normalizedTasks
-    .map((task) => taskNode(task))
+    .map((task) => taskNode(task, capabilityContracts.get(task.id)))
     .sort((a, b) => a.id.localeCompare(b.id));
   const taskIds = new Set(taskNodes.map((node) => node.id));
   const dependedOn = new Set(taskNodes.flatMap((node) => node.dependsOn));
@@ -76,6 +80,7 @@ export function sealExecutionPlan(plan, options = {}) {
     effectPolicy: 'side_effect_free',
     acceptanceCriteria: [],
     verify: null,
+    capabilityGrant: capabilityGrantForRole('verifier'),
   };
 
   const nodes = [...taskNodes, terminalNode].sort((a, b) => a.id.localeCompare(b.id));
@@ -150,6 +155,26 @@ export function validateSealedExecutionGraph(graph) {
     if (!idSet.has(graph.terminalVerificationNodeId)) errors.push('missing terminal verification node');
 
     for (const node of graph.nodes) {
+      try {
+        const contract = validateRoleTaskContract({
+          id: node.id,
+          owner: node.role,
+          files_modified: node.filesModified || [],
+          writes: node.writes || [],
+          requested_capabilities: node.capabilityGrant?.capabilities || [],
+        });
+        const expectedGrant = {
+          sandboxMode: contract.sandboxMode,
+          writeScope: contract.writeScope,
+          capabilities: [...contract.capabilities].sort(),
+        };
+        if (canonical(node.capabilityGrant) !== canonical(expectedGrant)) {
+          errors.push('capability grant mismatch: ' + node.id);
+        }
+      } catch (error) {
+        errors.push('capability policy violation: ' + node.id + ': ' + error.message);
+      }
+
       if (!Array.isArray(node.dependsOn)) {
         errors.push('node dependencies missing: ' + node.id);
         continue;
@@ -302,7 +327,7 @@ export function executionGraphHash(graph) {
   return hashGraph(graph);
 }
 
-function taskNode(task) {
+function taskNode(task, capabilityContract) {
   return {
     id: task.id,
     kind: 'agent',
@@ -315,6 +340,20 @@ function taskNode(task) {
     effectPolicy: task.effect_policy,
     acceptanceCriteria: [...(task.acceptance_criteria || [])],
     verify: task.verify || null,
+    capabilityGrant: {
+      sandboxMode: capabilityContract.sandboxMode,
+      writeScope: capabilityContract.writeScope,
+      capabilities: [...capabilityContract.capabilities].sort(),
+    },
+  };
+}
+
+function capabilityGrantForRole(role) {
+  const policy = roleCapabilityPolicy(role);
+  return {
+    sandboxMode: policy.sandboxMode,
+    writeScope: policy.writeScope,
+    capabilities: [...policy.capabilities].sort(),
   };
 }
 
