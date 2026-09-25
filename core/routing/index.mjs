@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { normalizeFailureEnvelope } from './failure-envelope.mjs';
 
 export const MODEL_ROUTING_POLICY = Object.freeze(
   JSON.parse(readFileSync(new URL('./model-routing.json', import.meta.url), 'utf8'))
@@ -6,6 +7,7 @@ export const MODEL_ROUTING_POLICY = Object.freeze(
 
 const LUNA_ORDER = Object.freeze(['luna_medium', 'luna_high', 'luna_xhigh', 'luna_max']);
 const SOL_ORDER = Object.freeze(['sol_high', 'sol_xhigh', 'sol_max']);
+const ROUTE_ORDER = Object.freeze([...LUNA_ORDER, ...SOL_ORDER]);
 
 export const ALLOWED_MODELS = Object.freeze([
   ...new Set(Object.values(MODEL_ROUTING_POLICY.levels || {}).map(level => level?.model).filter(Boolean)),
@@ -41,7 +43,7 @@ export function resolveRoleRouting(role, options = {}) {
   const forced = normalizeForcedRoute(role, options, policy);
 
   let routeLevel = forced || baseRouteFor(role, context, policy, reasons);
-  if (!forced) routeLevel = applyFailureEscalation(routeLevel, context, policy, reasons);
+  if (!forced) routeLevel = applyFailureEscalation(routeLevel, context, policy, reasons, role);
 
   const level = policy.levels?.[routeLevel];
   if (!level) throw new Error('Unknown routing level: ' + routeLevel);
@@ -125,7 +127,7 @@ export function escalationReasons(role, context = {}) {
   const reasons = [];
   const policy = mergePolicy();
   baseRouteFor(role, context, policy, reasons);
-  applyFailureEscalation('luna_medium', context, policy, reasons);
+  applyFailureEscalation('luna_medium', context, policy, reasons, role);
   return [...new Set(reasons)];
 }
 
@@ -145,24 +147,33 @@ export function nextRouteWithinFamily(routeLevel, policyOverride) {
   return index >= 0 && index < order.length - 1 ? order[index + 1] : routeLevel;
 }
 
+export function nextRouteStep(routeLevel, policyOverride) {
+  const policy = mergePolicy(policyOverride);
+  if (!policy.levels?.[routeLevel]) throw new Error('Unknown routing level: ' + routeLevel);
+  const index = ROUTE_ORDER.indexOf(routeLevel);
+  return index >= 0 && index < ROUTE_ORDER.length - 1
+    ? ROUTE_ORDER[index + 1]
+    : routeLevel;
+}
+
 function baseRouteFor(role, context, policy, reasons) {
   const profile = (name, reason) => {
     if (reason) reasons.push(reason);
     return routeForDifficulty(name, { policy });
   };
 
-  if (context.forceSolMax === true || context.extremeUnresolved === true) {
-    return profile('extreme', 'extreme-unresolved');
-  }
-  if (context.forceSolXHigh === true || context.criticalUnresolved === true) {
-    return profile('critical', 'critical-unresolved');
+  if (context.lunaExhausted === true || context.lunaMaxFailed === true) {
+    return profile('exceptional', 'luna-max-exhausted');
   }
   if (
+    context.forceSolMax === true ||
+    context.forceSolXHigh === true ||
+    context.extremeUnresolved === true ||
+    context.criticalUnresolved === true ||
     context.forceHeavy === true ||
-    context.exceptionallyDifficult === true ||
-    context.lunaExhausted === true
+    context.exceptionallyDifficult === true
   ) {
-    return profile('exceptional', 'luna-capability-exhausted');
+    return profile('very_hard', 'luna-max-required-before-sol');
   }
 
   const classification = String(context.classification || '');
@@ -188,14 +199,14 @@ function baseRouteFor(role, context, policy, reasons) {
     context.unresolvedSecurityRisk === true;
 
   if (role === 'security-reviewer') {
-    if (criticalSecurity) return profile('extreme', 'critical-security-judgment');
-    if (complexSecurity) return profile('exceptional', 'complex-security-reasoning');
+    if (criticalSecurity) return profile('very_hard', 'critical-security-needs-luna-max');
+    if (complexSecurity) return profile('very_hard', 'complex-security-needs-luna-max');
     return profile('very_hard', 'bounded-security-review');
   }
 
   if (role === 'architect') {
     if (context.unresolvedArchitecture === true) {
-      return profile('exceptional', 'unresolved-architecture');
+      return profile('very_hard', 'unresolved-architecture-needs-luna-max');
     }
     if (importantArchitecture || securitySensitive) {
       return profile('very_hard', 'important-architecture');
@@ -208,7 +219,7 @@ function baseRouteFor(role, context, policy, reasons) {
 
   if (role === 'plan-auditor') {
     if (context.unresolvedArchitecture === true || context.criticalPlanRisk === true) {
-      return profile('exceptional', 'unresolved-plan-risk');
+      return profile('very_hard', 'unresolved-plan-risk-needs-luna-max');
     }
     if (importantArchitecture || highAmbiguity || securitySensitive) {
       return profile('very_hard', 'high-risk-plan-audit');
@@ -277,43 +288,52 @@ function baseRouteFor(role, context, policy, reasons) {
   return profile('routine');
 }
 
-function applyFailureEscalation(routeLevel, context, policy, reasons) {
-  const failures = Math.max(0, Number(context.verificationFailures || 0));
-  if (!failures) return routeLevel;
+function applyFailureEscalation(routeLevel, context, policy, reasons, role) {
+  if (context.failureEnvelope) {
+    const envelope = normalizeFailureEnvelope(context.failureEnvelope);
+    if (envelope.targetRole && envelope.targetRole !== role) {
+      return routeLevel;
+    }
 
-  const level = policy.levels?.[routeLevel];
-  if (!level) return routeLevel;
+    const attemptedRoute =
+      envelope.attemptedRoute && policy.levels?.[envelope.attemptedRoute]
+        ? envelope.attemptedRoute
+        : routeLevel;
 
-  if (level.family === 'sol') {
-    const next = nextRouteWithinFamily(routeLevel, policy);
-    if (next !== routeLevel) {
-      reasons.push(failures >= 2
-        ? 'repeated-failure-sol-effort-increase'
-        : 'first-failure-same-family-effort-increase');
+    if (!envelope.reasoningEscalationEligible) {
+      reasons.push('failure-' + envelope.kind + '-keep-route');
+      return attemptedRoute;
+    }
+
+    const next = nextRouteStep(attemptedRoute, policy);
+    if (next !== attemptedRoute) {
+      reasons.push('reasoning-failure-one-rung');
+      reasons.push('failure-kind-' + envelope.kind);
     }
     return next;
   }
 
-  if (
-    routeLevel === 'luna_max' &&
-    (
-      context.lunaMaxFailed === true ||
-      context.repeatedSameFailure === true ||
-      failures >= 3
-    )
-  ) {
-    reasons.push('luna-max-repeated-failure');
-    return 'sol_high';
+  const failures = Math.max(0, Number(context.verificationFailures || 0));
+  if (!failures) return routeLevel;
+
+  // Legacy verificationFailures is interpreted only for the failed verifier
+  // or the implementation-owner repair path. Other sibling stages stay local.
+  if (!['verifier', 'implementer'].includes(role)) return routeLevel;
+
+  let current = routeLevel;
+  if (context.lunaMaxFailed === true || context.lunaExhausted === true) {
+    current = 'luna_max';
   }
 
-  if (failures >= 2) {
-    reasons.push('repeated-failure-use-luna-max');
-    return 'luna_max';
+  for (let step = 0; step < failures; step++) {
+    current = nextRouteStep(current, policy);
   }
 
-  const next = nextRouteWithinFamily(routeLevel, policy);
-  if (next !== routeLevel) reasons.push('first-failure-same-family-effort-increase');
-  return next;
+  if (current !== routeLevel) {
+    reasons.push('gradual-failure-escalation');
+    if (current.startsWith('sol_')) reasons.push('luna-max-exhausted');
+  }
+  return current;
 }
 
 function normalizeForcedRoute(role, options, policy) {

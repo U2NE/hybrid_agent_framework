@@ -185,16 +185,31 @@ test('bounded security-sensitive work activates quality lanes but starts securit
   assert.equal(route(result, 'security-reviewer').routeLevel, 'luna_max');
 });
 
-test('complex exploit reasoning can escalate security reviewer to Sol while routine implementation downshifts', () => {
-  const result = prepareExecution({
+test('complex exploit reasoning reaches Luna Max before targeted failure can enter Sol', () => {
+  const base = {
     task: { request: 'Review authorization trust boundary exploit path', files: ['src/auth.js'] },
     request: 'Review authorization trust boundary exploit path',
     complexSecurityReasoning: true,
     exploitReasoning: true,
     tasks: [{ id: 'auth', depends_on: [], files_modified: ['src/auth.js'] }],
-  });
-  assert.equal(route(result, 'security-reviewer').routeLevel, 'sol_high');
+  };
+  const result = prepareExecution(base);
+  assert.equal(route(result, 'security-reviewer').routeLevel, 'luna_max');
   assert.equal(route(result, 'implementer').routeLevel, 'luna_medium');
+
+  const escalated = prepareExecution({
+    ...base,
+    failureEnvelope: {
+      kind: 'security-reasoning',
+      stage: 'review',
+      targetRole: 'security-reviewer',
+      attemptedRoute: 'luna_max',
+      sameFailureCount: 2,
+      semanticProgress: 'none',
+    },
+  });
+  assert.equal(route(escalated, 'security-reviewer').routeLevel, 'sol_high');
+  assert.equal(route(escalated, 'implementer').routeLevel, 'luna_medium');
 });
 
 test('verification failures increase Luna effort before Sol and do not make escalation sticky', () => {
@@ -214,8 +229,8 @@ test('verification failures increase Luna effort before Sol and do not make esca
     difficultReview: true,
     tasks: [{ id: 'fix', depends_on: [], files_modified: ['src/parser.js'] }],
   });
-  assert.equal(route(twice, 'code-reviewer').routeLevel, 'luna_max');
-  assert.equal(route(twice, 'verifier').routeLevel, 'luna_max');
+  assert.equal(route(twice, 'code-reviewer').routeLevel, 'luna_xhigh');
+  assert.equal(route(twice, 'verifier').routeLevel, 'luna_xhigh');
 
   const routine = prepareExecution({
     task: { request: 'Update parser message', files: ['src/parser.js'] },

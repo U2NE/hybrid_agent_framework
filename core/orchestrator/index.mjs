@@ -283,6 +283,7 @@ export function deriveRoutingContext(input, classification, requirements, securi
       /\b(?:large|major|large-scale|cross-module)\s+refactor\b|대규모\s*리팩터/i.test(request),
     securitySensitive: securityReview === true,
     verificationFailures: Number(input.verificationFailures || 0),
+    failureEnvelope: input.failureEnvelope || null,
     complexDebugging:
       input.complexDebugging === true ||
       (

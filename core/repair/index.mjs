@@ -192,10 +192,6 @@ export async function runRepairConvergence(options = {}) {
           ...(options.routingContext || {}),
           verificationFailures: attempt,
           repeatedSameFailure,
-          lunaExhausted:
-            repeatedSameFailure && attempt >= MAX_REPAIR_CYCLES,
-          lunaMaxFailed:
-            repeatedSameFailure && attempt >= MAX_REPAIR_CYCLES,
         },
       });
       const packet = buildRepairPacket(

@@ -122,7 +122,7 @@ test('prepareExecution records existing isolation/routing/security without modif
     assert.equal(schedule[0].facts.mode, worktreeAvailable ? 'worktree' : 'current-workspace');
     assert.ok(result.decisionTrace.some(d => d.facts.targetRole === 'security-reviewer' && d.reasonCodes.includes('SECURITY_AUTHORIZATION_CHANGE')));
     assert.equal(result.decisionTrace.find(d => d.decision === 'route').stage, 'routing');
-    assert.ok(result.decisionTrace.some(d => d.decision === 'route' && d.facts.escalated && d.facts.escalationReasons.includes('luna-capability-exhausted')));
+    assert.ok(result.decisionTrace.some(d => d.decision === 'route' && d.facts.escalated && d.facts.escalationReasons.includes('luna-max-exhausted')));
     assert.deepEqual(result.decisionTrace, prepareExecution({ ...input, worktreeAvailable }).decisionTrace);
   }
   assert.throws(

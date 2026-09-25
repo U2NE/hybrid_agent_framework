@@ -356,6 +356,5 @@ test('repair convergence stops after three failed repair cycles and uses existin
   assert.equal(result.ok, false);
   assert.equal(result.blocked, true);
   assert.equal(result.repairs.length, 3);
-  assert.deepEqual(routes.slice(0, 2), ['luna_high', 'luna_max']);
-  assert.match(routes[2], /^sol_/);
+  assert.deepEqual(routes, ['luna_high', 'luna_xhigh', 'luna_max']);
 });

@@ -115,7 +115,7 @@ test('architecture and security reasoning escalate by difficulty, not role name'
   const unresolvedArchitect = resolveRoleRouting('architect', {
     context: { unresolvedArchitecture: true },
   });
-  assert.equal(unresolvedArchitect.routeLevel, 'sol_high');
+  assert.equal(unresolvedArchitect.routeLevel, 'luna_max');
 
   const boundedSecurity = resolveRoleRouting('security-reviewer', {
     context: { securitySensitive: true },
@@ -125,12 +125,12 @@ test('architecture and security reasoning escalate by difficulty, not role name'
   const exploitSecurity = resolveRoleRouting('security-reviewer', {
     context: { complexSecurityReasoning: true, exploitReasoning: true },
   });
-  assert.equal(exploitSecurity.routeLevel, 'sol_high');
+  assert.equal(exploitSecurity.routeLevel, 'luna_max');
 
   const criticalSecurity = resolveRoleRouting('security-reviewer', {
     context: { criticalSecurityJudgment: true },
   });
-  assert.equal(criticalSecurity.routeLevel, 'sol_max');
+  assert.equal(criticalSecurity.routeLevel, 'luna_max');
 });
 
 test('failure-driven escalation stays in Luna before Sol and is stage-local', () => {
@@ -143,8 +143,18 @@ test('failure-driven escalation stays in Luna before Sol and is stage-local', ()
   const secondFailure = resolveRoleRouting('verifier', {
     context: { verificationFailures: 2 },
   });
-  assert.equal(secondFailure.routeLevel, 'luna_max');
+  assert.equal(secondFailure.routeLevel, 'luna_xhigh');
   assert.equal(secondFailure.modelTier, 'luna');
+
+  const thirdFailure = resolveRoleRouting('verifier', {
+    context: { verificationFailures: 3 },
+  });
+  assert.equal(thirdFailure.routeLevel, 'luna_max');
+
+  const fourthFailure = resolveRoleRouting('verifier', {
+    context: { verificationFailures: 4 },
+  });
+  assert.equal(fourthFailure.routeLevel, 'sol_high');
 
   const lunaMaxRepeat = resolveRoleRouting('security-reviewer', {
     context: { verificationFailures: 1, lunaMaxFailed: true, repeatedSameFailure: true },
@@ -165,7 +175,8 @@ test('routing allowlist is canonical and unavailable overrides fail closed witho
   const route = resolveRoleRouting('security-reviewer', {
     context: { complexSecurityReasoning: true },
   });
-  assert.equal(route.model, 'gpt-6-sol');
+  assert.equal(route.model, 'gpt-6-luna');
+  assert.equal(route.routeLevel, 'luna_max');
   assert.equal(route.inheritSessionModel, false);
 
   assert.throws(
@@ -174,8 +185,8 @@ test('routing allowlist is canonical and unavailable overrides fail closed witho
   );
   assert.throws(
     () => resolveRoleRouting('architect', {
+      routeLevel: 'sol_high',
       supportedModels: ['gpt-6-luna'],
-      context: { unresolvedArchitecture: true },
     }),
     error => error?.code === 'MODEL_UNAVAILABLE'
   );
@@ -196,8 +207,8 @@ test('routing allowlist is canonical and unavailable overrides fail closed witho
   );
 
   const blocked = failClosedModelRoute(route);
-  assert.equal(blocked.model, 'gpt-6-sol');
-  assert.equal(blocked.reasoningEffort, 'high');
+  assert.equal(blocked.model, 'gpt-6-luna');
+  assert.equal(blocked.reasoningEffort, 'max');
   assert.equal(blocked.inheritSessionModel, false);
   assert.equal(blocked.executable, false);
   assert.equal(blocked.fallback, 'fail-closed');

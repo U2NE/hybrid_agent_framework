@@ -22,31 +22,37 @@ The local Codex 0.156.1 model catalog was re-checked before defining the policy.
 
 ## Stage-local selection
 
-A task does not mechanically execute every rung. Each stage starts at the appropriate level from its own context.
+The default route remains Luna medium. A stage may begin higher inside the Luna family when concrete task evidence already establishes higher reasoning difficulty, but automatic static routing never skips from Luna directly into Sol.
 
 - routine implementation/test/verification: Luna medium;
 - moderately difficult planning/debugging/review: Luna high;
 - complex cross-module reasoning and ordinary architecture/audit: Luna xhigh;
-- important architecture, bounded security review, high ambiguity: Luna max;
-- Luna capability exhausted, unresolved architecture, or complex exploit/trust-boundary reasoning: Sol high;
-- critical unresolved reasoning: Sol xhigh;
-- extreme unresolved reasoning: Sol max.
+- important architecture, bounded or complex security review, high ambiguity, and unresolved high-risk reasoning: Luna max;
+- Sol is entered only after Luna max is actually exhausted for the affected stage, starting at Sol high.
 
-Role names do not force Sol. In particular, Architect, Plan Auditor, and Security Reviewer begin on Luna unless the actual stage context justifies Sol.
-
-Routing is recomputed after every stage. A Sol stage therefore does not make later routine implementation or verification sticky-Sol.
+Role names do not force Sol. Static difficulty flags such as complex exploit reasoning or unresolved architecture can raise the stage to Luna max, but they do not directly select Sol. An explicit administrative `routeLevel` override remains available as a compatibility/control surface.
 
 ## Failure-driven escalation
 
-Verification/debugging history raises reasoning budget conservatively:
+Hybrid represents actionable failures with `hybrid-failure-envelope/v1`. The envelope distinguishes environment/tool/policy failures from reasoning failures and carries the affected target role, attempted route, semantic progress, stable fingerprint, and retry recommendation.
 
-1. first failure: raise effort within the same family;
-2. repeated failure: use Luna max before considering Sol;
-3. repeated same failure after Luna max / explicit Luna-max failure: enter Sol high;
-4. subsequent Sol failures may raise Sol effort;
-5. the bounded fix loop remains the outer retry limit.
+The ordered automatic escalation ladder is:
 
-A single test failure is never sufficient by itself to jump from Luna to Sol.
+```text
+Luna medium
+  -> Luna high
+  -> Luna xhigh
+  -> Luna max
+  -> Sol high
+  -> Sol xhigh
+  -> Sol max
+```
+
+A reasoning failure advances at most one rung from the model that actually attempted the failed stage. Environment, tool, and policy failures stay on the same model and recover the failed dependency instead. A first model-format failure retries the same route. New actionable defect evidence may also be retried at the same route when a targeted retry is more appropriate than spending more reasoning budget.
+
+Failure routing is stage-local. A verifier failure does not raise the code reviewer, implementer, or the next unrelated stage. Sol therefore never becomes sticky: the next ordinary stage is independently routed and may return to Luna medium.
+
+The legacy `verificationFailures` counter remains supported for compatibility, but now walks the same ladder one rung per failure and applies only to the verifier or implementation-owner repair path. It no longer jumps directly from Luna high to Luna max or forces Sol merely because the bounded repair loop reached its final attempt.
 
 ## Runtime application
 
