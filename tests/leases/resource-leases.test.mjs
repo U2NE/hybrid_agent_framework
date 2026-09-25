@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { sealExecutionPlan } from '../../core/execution-graph/index.mjs';
+import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import {
   ResourceLeaseError,
   ResourceLeaseStore,
@@ -15,10 +15,7 @@ async function tempProject() {
 }
 
 function graphFor(tasks, runId = 'run-lease') {
-  return sealExecutionPlan({ tasks }, {
-    runId,
-    approvalScopeHash: 'approved-scope',
-  });
+  return sealApprovedExecutionPlan({ tasks }, { runId });
 }
 
 test('lease request is deterministically bound to the sealed task contract', () => {

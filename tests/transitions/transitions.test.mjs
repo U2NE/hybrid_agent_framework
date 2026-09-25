@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  requestLeaseExtension,
-  sealExecutionPlan,
-} from '../../core/execution-graph/index.mjs';
+import { requestLeaseExtension } from '../../core/execution-graph/index.mjs';
+import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import {
   ExecutionRunStore,
   TransitionError,
@@ -18,7 +16,7 @@ async function tempProject() {
 }
 
 function graphFor(effectPolicy = 'reconcile_required') {
-  return sealExecutionPlan({
+  return sealApprovedExecutionPlan({
     tasks: [
       {
         id: 'task-a',
@@ -32,7 +30,6 @@ function graphFor(effectPolicy = 'reconcile_required') {
   }, {
     runId: 'run-1',
     revisionId: 'G1',
-    approvalScopeHash: 'approval-scope',
   });
 }
 

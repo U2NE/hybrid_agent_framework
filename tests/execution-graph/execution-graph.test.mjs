@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createUserApprovalReceipt } from '../../core/approval/index.mjs';
 import {
   ExecutionGraphError,
+  executionApprovalSubject,
   materialRevisionReasons,
   requestLeaseExtension,
   sealExecutionPlan,
   validateSealedExecutionGraph,
 } from '../../core/execution-graph/index.mjs';
+import {
+  sealApprovedExecutionPlan,
+  testApprovalReceipt,
+} from '../helpers/execution-approval.mjs';
 
 const plan = {
   phase: 'auth',
@@ -34,20 +40,22 @@ const plan = {
   ],
 };
 
-test('approved plan seals into a deterministic hash-bound execution graph', () => {
+test('approved plan seals into a deterministic receipt-bound execution graph', () => {
   const input = {
     runId: 'run-1',
     revisionId: 'G1',
-    approvalScopeHash: 'approval-hash',
-    specHash: 'spec-hash',
     concurrencyLimit: 4,
   };
-  const first = sealExecutionPlan(plan, input);
-  const second = sealExecutionPlan(plan, input);
+  const receipt = testApprovalReceipt(plan, input);
+  const first = sealExecutionPlan(plan, { ...input, approvalReceipt: receipt });
+  const second = sealExecutionPlan(plan, { ...input, approvalReceipt: receipt });
 
-  assert.equal(first.schema, 'hybrid-exec-graph/v2');
+  assert.equal(first.schema, 'hybrid-exec-graph/v3');
   assert.equal(first.descriptorHash, second.descriptorHash);
-  assert.equal(first.approvalScopeHash, 'approval-hash');
+  assert.equal(first.approvalScopeHash, receipt.receiptHash);
+  assert.deepEqual(first.approvalReceipt, receipt);
+  assert.equal(first.specHash, receipt.specHash);
+  assert.equal(first.planHash, receipt.planHash);
   assert.equal(first.terminalVerificationNodeId, 'verify-final');
   assert.deepEqual(first.entryNodeIds, ['api']);
   assert.equal(first.concurrencyLimit, 4);
@@ -56,9 +64,8 @@ test('approved plan seals into a deterministic hash-bound execution graph', () =
 });
 
 test('sealed graph carries deterministic role capability grants', () => {
-  const graph = sealExecutionPlan(plan, {
+  const graph = sealApprovedExecutionPlan(plan, {
     runId: 'run-capabilities',
-    approvalScopeHash: 'approval-hash',
   });
   const api = graph.nodes.find((node) => node.id === 'api');
   const verifier = graph.nodes.find((node) => node.id === 'verify-final');
@@ -84,17 +91,15 @@ test('read-only roles cannot be sealed as mutating execution owners', () => {
         }],
       }, {
         runId: 'run-' + owner,
-        approvalScopeHash: 'approval-hash',
       }),
       (error) => error?.code === 'ROLE_WRITE_DENIED'
     );
   }
 });
 
-test('capability grant tampering fails sealed graph validation even after rehash is absent', () => {
-  const graph = sealExecutionPlan(plan, {
+test('capability grant tampering fails sealed graph validation', () => {
+  const graph = sealApprovedExecutionPlan(plan, {
     runId: 'run-cap-tamper',
-    approvalScopeHash: 'approval-hash',
   });
   const tampered = structuredClone(graph);
   const api = tampered.nodes.find((node) => node.id === 'api');
@@ -112,7 +117,7 @@ test('capability grant tampering fails sealed graph validation even after rehash
 });
 
 test('design executor seals only with an exclusive UI resource lease', () => {
-  const graph = sealExecutionPlan({
+  const designPlan = {
     tasks: [{
       id: 'design-checkout',
       owner: 'design-executor',
@@ -120,9 +125,9 @@ test('design executor seals only with an exclusive UI resource lease', () => {
       resources: [{ key: 'ui:checkout', mode: 'exclusive' }],
       depends_on: [],
     }],
-  }, {
+  };
+  const graph = sealApprovedExecutionPlan(designPlan, {
     runId: 'run-design',
-    approvalScopeHash: 'approval-hash',
   });
 
   const node = graph.nodes.find((item) => item.id === 'design-checkout');
@@ -140,23 +145,99 @@ test('design executor seals only with an exclusive UI resource lease', () => {
       }],
     }, {
       runId: 'run-design-no-lease',
-      approvalScopeHash: 'approval-hash',
     }),
     (error) => error?.code === 'UI_LEASE_REQUIRED'
   );
 });
 
-test('execution sealing fails closed without an approval scope', () => {
+test('execution sealing fails closed without a user approval receipt', () => {
   assert.throws(
     () => sealExecutionPlan(plan, { runId: 'run-1' }),
-    (error) => error instanceof ExecutionGraphError && error.code === 'APPROVAL_SCOPE_REQUIRED'
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'APPROVAL_RECEIPT_REQUIRED'
   );
 });
 
-test('descriptor tampering is detected before execution', () => {
+test('approval receipt cannot be reused for a different execution plan', () => {
+  const runId = 'run-reuse';
+  const receipt = testApprovalReceipt(plan, { runId });
+  const changed = structuredClone(plan);
+  changed.tasks[1].files_modified = ['src/other-client.js'];
+
+  assert.throws(
+    () => sealExecutionPlan(changed, { runId, approvalReceipt: receipt }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'APPROVAL_SUBJECT_MISMATCH' &&
+      error.details.mismatches.some((item) => item.field === 'planHash')
+  );
+});
+
+test('approval receipt tampering fails validation before execution', () => {
+  const runId = 'run-receipt-tamper';
+  const receipt = structuredClone(testApprovalReceipt(plan, { runId }));
+  receipt.approvedAt = '2026-01-02T00:00:00.000Z';
+
+  assert.throws(
+    () => sealExecutionPlan(plan, { runId, approvalReceipt: receipt }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'INVALID_APPROVAL_RECEIPT'
+  );
+});
+
+test('caller cannot substitute planHash or specHash for the content being approved', () => {
+  const wrong = '0'.repeat(64);
+
+  assert.throws(
+    () => executionApprovalSubject(plan, {
+      runId: 'run-hash-mismatch',
+      planHash: wrong,
+    }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'PLAN_HASH_MISMATCH'
+  );
+
+  assert.throws(
+    () => executionApprovalSubject(plan, {
+      runId: 'run-spec-mismatch',
+      spec: { goal: 'approved behavior' },
+      specHash: wrong,
+    }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'SPEC_HASH_MISMATCH'
+  );
+});
+
+test('approval receipt binds exact run spec and normalized plan hashes', () => {
+  const subject = executionApprovalSubject(plan, {
+    runId: 'run-subject',
+    spec: { goal: 'ship auth' },
+  });
+  const receipt = createUserApprovalReceipt({
+    ...subject,
+    approvalId: 'approval-subject',
+    approvedBy: 'user',
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  });
   const graph = sealExecutionPlan(plan, {
+    runId: 'run-subject',
+    spec: { goal: 'ship auth' },
+    approvalReceipt: receipt,
+  });
+
+  assert.equal(graph.runId, receipt.runId);
+  assert.equal(graph.specHash, receipt.specHash);
+  assert.equal(graph.planHash, receipt.planHash);
+  assert.equal(graph.approvalScopeHash, receipt.receiptHash);
+});
+
+test('descriptor tampering is detected before execution', () => {
+  const graph = sealApprovedExecutionPlan(plan, {
     runId: 'run-1',
-    approvalScopeHash: 'approval-hash',
   });
   const tampered = structuredClone(graph);
   const node = tampered.nodes.find((item) => item.id === 'client');
@@ -170,11 +251,10 @@ test('descriptor tampering is detected before execution', () => {
   );
 });
 
-test('non-material lease extension creates a child revision and preserves approval scope', () => {
-  const graph = sealExecutionPlan(plan, {
+test('non-material lease extension creates a child revision and preserves approval receipt', () => {
+  const graph = sealApprovedExecutionPlan(plan, {
     runId: 'run-1',
     revisionId: 'G1',
-    approvalScopeHash: 'approval-hash',
   });
 
   const result = requestLeaseExtension(graph, {
@@ -187,16 +267,16 @@ test('non-material lease extension creates a child revision and preserves approv
   assert.equal(result.graph.revisionId, 'G2');
   assert.equal(result.graph.parentDescriptorHash, graph.descriptorHash);
   assert.equal(result.graph.approvalScopeHash, graph.approvalScopeHash);
+  assert.deepEqual(result.graph.approvalReceipt, graph.approvalReceipt);
   assert.notEqual(result.graph.descriptorHash, graph.descriptorHash);
   assert.equal(result.requiresReschedule, true);
   assert.deepEqual(result.conflicts, ['api']);
   assert.equal(validateSealedExecutionGraph(result.graph), true);
 });
 
-test('material semantic lease request requires user approval and does not mutate graph', () => {
-  const graph = sealExecutionPlan(plan, {
+test('material semantic lease request requires new user approval and does not mutate graph', () => {
+  const graph = sealApprovedExecutionPlan(plan, {
     runId: 'run-1',
-    approvalScopeHash: 'approval-hash',
   });
 
   const result = requestLeaseExtension(graph, {

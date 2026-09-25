@@ -8,6 +8,7 @@ import { appendRuntimeEvent, sanitizeStructuredMetadata, createOrchestrationEven
 import { prepareExecution, prepareExecutionWithProvenance, runQualityClosure } from '../../core/orchestrator/index.mjs';
 import { assessSecurityReview, requiresSecurityReview } from '../../core/verification/index.mjs';
 import { buildPlanningDecision } from '../../core/planning/index.mjs';
+import { createUserApprovalReceipt } from '../../core/approval/index.mjs';
 const decision = (extra = {}) => buildDecision({ runId: 'r', stage: 'dispatch', taskId: 'A', waveId: 'w', agentRunId: 'a', decision: 'dispatch', snapshot: 's', intendedAction: { type: 'dispatch', role: 'implementer' }, files: ['a.js'], ...extra });
 const action = d => ({ runId: d.runId, decisionId: d.decisionId, action: d.intendedAction.type, role: d.intendedAction.role, taskId: d.taskId, waveId: d.waveId, agentRunId: d.agentRunId, snapshot: d.snapshot, attribution: 'observed', files: ['a.js'] });
 const codes = result => result.findings.map(f => f.code);
@@ -164,13 +165,23 @@ test('approved wired preparation durably binds the sealed graph before execution
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'execution-graph-wired-'));
   const runtimeRoot = path.join(root, 'runtime');
   try {
-    const wired = await prepareExecutionWithProvenance({
+    const base = {
       runId: 'sealed-run',
       request: 'Update src/a.js behavior',
       task: { request: 'Update src/a.js behavior', files: ['src/a.js'] },
       tasks: [{ id: 'A', owner: 'implementer', files_modified: ['src/a.js'], depends_on: [] }],
+    };
+    const pending = prepareExecution(base);
+    const approvalReceipt = createUserApprovalReceipt({
+      ...pending.approvalSubject,
+      approvalId: 'approval-sealed-run',
+      approvedBy: 'user',
+      approvedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const wired = await prepareExecutionWithProvenance({
+      ...base,
       executionApproved: true,
-      approvalScopeHash: 'approval-scope',
+      approvalReceipt,
     }, { runtimeRoot, repoRoot: root });
 
     assert.equal(wired.executionPersistence.initialized, true);
@@ -185,12 +196,9 @@ test('approved wired preparation durably binds the sealed graph before execution
     assert.equal(persisted.descriptorHash, wired.executionGraph.descriptorHash);
 
     const replay = await prepareExecutionWithProvenance({
-      runId: 'sealed-run',
-      request: 'Update src/a.js behavior',
-      task: { request: 'Update src/a.js behavior', files: ['src/a.js'] },
-      tasks: [{ id: 'A', owner: 'implementer', files_modified: ['src/a.js'], depends_on: [] }],
+      ...base,
       executionApproved: true,
-      approvalScopeHash: 'approval-scope',
+      approvalReceipt,
     }, { runtimeRoot, repoRoot: root });
     assert.equal(replay.executionPersistence.status, 'replayed');
   } finally {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareExecution } from '../../core/orchestrator/index.mjs';
+import { createUserApprovalReceipt } from '../../core/approval/index.mjs';
 
 function route(result, stage) {
   return result.modelRouting.stages.find((entry) => entry.stage === stage);
@@ -122,20 +123,28 @@ test('execution graph is sealed only after explicit execution approval', () => {
 
   const pending = prepareExecution(base);
   assert.equal(pending.executionGraph, null);
+  assert.equal(pending.approvalSubject.runId, 'run-approved');
 
+  const receipt = createUserApprovalReceipt({
+    ...pending.approvalSubject,
+    approvalId: 'approval-run-approved',
+    approvedBy: 'user',
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  });
   const approved = prepareExecution({
     ...base,
     executionApproved: true,
-    approvalScopeHash: 'approved-scope',
+    approvalReceipt: receipt,
   });
-  assert.equal(approved.executionGraph.schema, 'hybrid-exec-graph/v2');
+  assert.equal(approved.executionGraph.schema, 'hybrid-exec-graph/v3');
   assert.equal(approved.executionGraph.runId, 'run-approved');
-  assert.equal(approved.executionGraph.approvalScopeHash, 'approved-scope');
+  assert.equal(approved.executionGraph.approvalScopeHash, receipt.receiptHash);
+  assert.deepEqual(approved.executionGraph.approvalReceipt, receipt);
   assert.ok(approved.executionGraph.descriptorHash);
 
   assert.throws(
     () => prepareExecution({ ...base, executionApproved: true }),
-    /approvalScopeHash or approvalScope is required/
+    /user approval receipt is required/
   );
 });
 

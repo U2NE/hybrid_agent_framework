@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sealExecutionPlan } from '../../core/execution-graph/index.mjs';
+import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import { ExecutionRunStore } from '../../core/transitions/index.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -28,7 +28,7 @@ async function runCli(args) {
 
 test('lease CLI acquires verifies lists and releases a sealed task authorization', async () => {
   const project = await tempProject();
-  const graph = sealExecutionPlan({
+  const graph = sealApprovedExecutionPlan({
     tasks: [{
       id: 'A',
       owner: 'implementer',
@@ -37,7 +37,6 @@ test('lease CLI acquires verifies lists and releases a sealed task authorization
     }],
   }, {
     runId: 'run-cli',
-    approvalScopeHash: 'approved-scope',
   });
   await new ExecutionRunStore(project, graph.runId).initializeGraph(graph);
 

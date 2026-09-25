@@ -5,7 +5,7 @@ import { evaluateRequirements } from '../requirements/index.mjs';
 import { buildExecutionWaves, planExecutionIsolation, findFileConflicts } from '../scheduler/index.mjs';
 import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
 import { assessSecurityReview } from '../verification/index.mjs';
-import { sealExecutionPlan } from '../execution-graph/index.mjs';
+import { executionApprovalSubject, sealExecutionPlan } from '../execution-graph/index.mjs';
 import { ExecutionRunStore } from '../transitions/index.mjs';
 import { assessDesignWork } from '../design/index.mjs';
 
@@ -134,22 +134,24 @@ export function prepareExecution(input) {
   );
   const pipeline = derivePipeline({ classification, securityReview, needs });
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
+  const executionPlan = Array.isArray(input.tasks) && input.tasks.length
+    ? (input.plan || { tasks: input.tasks })
+    : null;
+  const approvalOptions = executionPlan
+    ? executionApprovalOptions(input)
+    : null;
+  const approvalSubject = executionPlan
+    ? executionApprovalSubject(executionPlan, approvalOptions)
+    : null;
   const executionGraph =
-    input.executionApproved === true && Array.isArray(input.tasks) && input.tasks.length
-      ? sealExecutionPlan(
-          input.plan || { tasks: input.tasks },
-          {
-            runId: input.runId || 'execution',
-            revisionId: input.graphRevisionId || 'G1',
-            spec: input.spec ?? null,
-            specHash: input.specHash,
-            planHash: input.planHash,
-            approvalScopeHash: input.approvalScopeHash,
-            approvalScope: input.approvalScope,
-            concurrencyLimit: input.concurrencyLimit,
-            terminalVerificationNodeId: input.terminalVerificationNodeId,
-          }
-        )
+    input.executionApproved === true && executionPlan
+      ? sealExecutionPlan(executionPlan, {
+          ...approvalOptions,
+          revisionId: input.graphRevisionId || 'G1',
+          approvalReceipt: input.approvalReceipt,
+          concurrencyLimit: input.concurrencyLimit,
+          terminalVerificationNodeId: input.terminalVerificationNodeId,
+        })
       : null;
 
   return {
@@ -164,6 +166,7 @@ export function prepareExecution(input) {
     isolationPlan,
     routingContext,
     modelRouting,
+    approvalSubject,
     executionGraph,
     blocked:
       classification.tier === TaskTier.AMBIGUOUS &&
@@ -293,6 +296,16 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
       input.durableKnowledgeChange === true ||
       architectureKnowledge,
   };
+}
+
+function executionApprovalOptions(input = {}) {
+  const options = {
+    runId: input.runId || 'execution',
+  };
+  if (input.spec !== undefined) options.spec = input.spec;
+  if (input.specHash !== undefined) options.specHash = input.specHash;
+  if (input.planHash !== undefined) options.planHash = input.planHash;
+  return options;
 }
 
 function deriveImplementationRoles(input, designAssessment = {}) {

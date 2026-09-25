@@ -90,6 +90,15 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(state, /hybrid-state:v1/);
   assert.match(state, /"schema": "hybrid-state\/v1"/);
 
+  const approvalCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'approval', 'index.mjs'),
+    'utf8'
+  );
+  assert.match(approvalCore, /export function createUserApprovalReceipt/);
+  const installedAgents = await fs.readFile(path.join(target, 'AGENTS.md'), 'utf8');
+  assert.match(installedAgents, /User approval is an authority boundary/);
+  assert.match(installedAgents, /MUST NOT self-issue a receipt/);
+
   const routingPolicy = JSON.parse(
     await fs.readFile(path.join(target, '.hybrid', 'core', 'routing', 'model-routing.json'), 'utf8')
   );

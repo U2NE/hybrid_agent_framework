@@ -5,8 +5,9 @@ import {
   tasksConflict,
 } from '../scheduler/index.mjs';
 import { roleCapabilityPolicy, validateRoleTaskContract } from '../capabilities/index.mjs';
+import { validateUserApprovalReceipt } from '../approval/index.mjs';
 
-export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v2';
+export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v3';
 
 const MATERIAL_FLAGS = Object.freeze({
   productBehaviorChanged: 'PRODUCT_BEHAVIOR_CHANGE',
@@ -35,12 +36,18 @@ export function sealExecutionPlan(plan, options = {}) {
   const runId = requiredString(options.runId, 'runId');
   const revisionId = String(options.revisionId || 'G1').trim();
   if (!revisionId) throw new ExecutionGraphError('revisionId is required', 'INVALID_REVISION');
-  const approvalScopeHash = resolveApprovalScopeHash(options);
   const normalizedTasks = tasks.map((task) => normalizeTask(task));
   const capabilityContracts = new Map(
     normalizedTasks.map((task) => [task.id, validateRoleTaskContract(task)])
   );
   buildExecutionWaves(normalizedTasks);
+  const approvalSubject = executionApprovalSubjectFromNormalized(
+    plan,
+    normalizedTasks,
+    { ...options, runId }
+  );
+  const approvalReceipt = requireApprovalReceipt(options.approvalReceipt, approvalSubject);
+  const approvalScopeHash = approvalReceipt.receiptHash;
 
   const terminalVerificationNodeId = String(
     options.terminalVerificationNodeId || 'verify-final'
@@ -108,9 +115,10 @@ export function sealExecutionPlan(plan, options = {}) {
     runId,
     revisionId,
     parentDescriptorHash: null,
-    specHash: options.specHash || hashValue(options.spec ?? null),
-    planHash: options.planHash || hashValue(normalizedPlanForHash(plan, normalizedTasks)),
+    specHash: approvalSubject.specHash,
+    planHash: approvalSubject.planHash,
     approvalScopeHash,
+    approvalReceipt,
     concurrencyLimit: positiveInt(options.concurrencyLimit, 8),
     terminalVerificationNodeId,
     entryNodeIds,
@@ -146,8 +154,24 @@ export function validateSealedExecutionGraph(graph) {
   if (!Array.isArray(graph.edges)) errors.push('missing edges');
   if (!Array.isArray(graph.entryNodeIds)) errors.push('missing entryNodeIds');
   if (!Array.isArray(graph.amendments)) errors.push('missing amendments');
+  if (!graph.approvalReceipt || typeof graph.approvalReceipt !== 'object' || Array.isArray(graph.approvalReceipt)) {
+    errors.push('missing approvalReceipt');
+  }
 
   if (!errors.length) {
+    try {
+      validateUserApprovalReceipt(graph.approvalReceipt, {
+        runId: graph.runId,
+        specHash: graph.specHash,
+        planHash: graph.planHash,
+      });
+      if (graph.approvalScopeHash !== graph.approvalReceipt.receiptHash) {
+        errors.push('approval scope/receipt mismatch');
+      }
+    } catch (error) {
+      errors.push('approval receipt invalid: ' + error.message);
+    }
+
     const ids = graph.nodes.map((node) => node.id);
     if (ids.some((id) => typeof id !== 'string' || !id)) errors.push('invalid node id');
     if (new Set(ids).size !== ids.length) errors.push('duplicate node id');
@@ -220,6 +244,16 @@ export function validateSealedExecutionGraph(graph) {
     );
   }
   return true;
+}
+
+export function executionApprovalSubject(plan, options = {}) {
+  const tasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+  if (!tasks.length) {
+    throw new ExecutionGraphError('approval subject requires at least one task', 'EMPTY_EXECUTION_GRAPH');
+  }
+  const normalizedTasks = tasks.map((task) => normalizeTask(task));
+  buildExecutionWaves(normalizedTasks);
+  return executionApprovalSubjectFromNormalized(plan, normalizedTasks, options);
 }
 
 export function requestLeaseExtension(graph, input = {}) {
@@ -388,17 +422,54 @@ function hashGraph(graph) {
   return hashValue(copy);
 }
 
-function resolveApprovalScopeHash(options) {
-  if (typeof options.approvalScopeHash === 'string' && options.approvalScopeHash.trim()) {
-    return options.approvalScopeHash.trim();
+function requireApprovalReceipt(receipt, subject) {
+  if (!receipt) {
+    throw new ExecutionGraphError(
+      'user approval receipt is required before execution can be sealed',
+      'APPROVAL_RECEIPT_REQUIRED'
+    );
   }
-  if (options.approvalScope !== undefined) {
-    return hashValue(options.approvalScope);
+  try {
+    validateUserApprovalReceipt(receipt, subject);
+  } catch (error) {
+    throw new ExecutionGraphError(
+      error.message,
+      error.code || 'INVALID_APPROVAL_RECEIPT',
+      error.details || {}
+    );
   }
-  throw new ExecutionGraphError(
-    'approvalScopeHash or approvalScope is required before execution can be sealed',
-    'APPROVAL_SCOPE_REQUIRED'
-  );
+  return structuredClone(receipt);
+}
+
+function executionApprovalSubjectFromNormalized(plan, normalizedTasks, options = {}) {
+  const runId = requiredString(options.runId, 'runId');
+  const computedPlanHash = hashValue(normalizedPlanForHash(plan, normalizedTasks));
+  if (options.planHash !== undefined && String(options.planHash).trim() !== computedPlanHash) {
+    throw new ExecutionGraphError(
+      'provided planHash does not match the normalized execution plan',
+      'PLAN_HASH_MISMATCH',
+      { expected: computedPlanHash, actual: String(options.planHash).trim() }
+    );
+  }
+
+  let specHash;
+  if (options.spec !== undefined) {
+    const computedSpecHash = hashValue(options.spec);
+    if (options.specHash !== undefined && String(options.specHash).trim() !== computedSpecHash) {
+      throw new ExecutionGraphError(
+        'provided specHash does not match the supplied spec',
+        'SPEC_HASH_MISMATCH',
+        { expected: computedSpecHash, actual: String(options.specHash).trim() }
+      );
+    }
+    specHash = computedSpecHash;
+  } else if (options.specHash !== undefined) {
+    specHash = requireSha256(options.specHash, 'specHash');
+  } else {
+    specHash = hashValue(null);
+  }
+
+  return { runId, specHash, planHash: computedPlanHash };
 }
 
 function normalizedPlanForHash(plan, normalizedTasks) {
@@ -410,6 +481,14 @@ function normalizedPlanForHash(plan, normalizedTasks) {
 function requiredString(value, field) {
   const text = String(value ?? '').trim();
   if (!text) throw new ExecutionGraphError(field + ' is required', 'MISSING_GRAPH_FIELD');
+  return text;
+}
+
+function requireSha256(value, field) {
+  const text = requiredString(value, field);
+  if (!/^[0-9a-f]{64}$/.test(text)) {
+    throw new ExecutionGraphError(field + ' must be a sha256 hex digest', 'INVALID_SUBJECT_HASH');
+  }
   return text;
 }
 
