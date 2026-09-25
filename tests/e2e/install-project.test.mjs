@@ -62,6 +62,20 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   );
   assert.match(qualityClosure, /export async function runQualityClosure/);
 
+  const leaseCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'leases', 'index.mjs'),
+    'utf8'
+  );
+  assert.match(leaseCore, /export class ResourceLeaseStore/);
+  assert.match(agents, /active dispatch authorization/);
+
+  const installedHelp = await execFileAsync(
+    process.execPath,
+    [path.join(target, '.hybrid', 'bin', 'hybrid.mjs'), 'help'],
+    { cwd: target }
+  );
+  assert.match(installedHelp.stdout, /hybrid lease acquire/);
+
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);
   await assert.rejects(fs.access(path.join(target, '.codex', 'skills', 'hybrid', 'SKILL.md')));

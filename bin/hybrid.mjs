@@ -6,6 +6,8 @@ import { classifyTask } from '../core/classifier/index.mjs';
 import { compilePlan, parsePlanDocument, validatePlan } from '../core/planning/index.mjs';
 import { prepareExecution } from '../core/orchestrator/index.mjs';
 import { StateStore } from '../core/state/index.mjs';
+import { ExecutionRunStore } from '../core/transitions/index.mjs';
+import { ResourceLeaseStore } from '../core/leases/index.mjs';
 import { ingestWiki, lintWiki, queryWiki } from '../core/wiki/index.mjs';
 
 const [command, ...args] = process.argv.slice(2);
@@ -31,6 +33,49 @@ try {
     case 'prepare': {
       const input = await readJsonFile(required(args[0], 'input JSON path'));
       print(prepareExecution(input));
+      break;
+    }
+
+    case 'lease': {
+      const sub = args[0];
+      const runId = required(args[1], 'run id');
+
+      if (sub === 'acquire') {
+        const taskId = required(args[2], 'task id');
+        const attemptId = required(args[3], 'attempt id');
+        const root = path.resolve(args[4] || '.');
+        const graph = await new ExecutionRunStore(root, runId).loadGraph();
+        const result = await new ResourceLeaseStore(root, runId).acquire(
+          graph,
+          taskId,
+          attemptId
+        );
+        print(result);
+      } else if (sub === 'release') {
+        const leaseId = required(args[2], 'lease id');
+        const leaseToken = required(args[3], 'lease token');
+        const root = path.resolve(args[4] || '.');
+        print(await new ResourceLeaseStore(root, runId).release(
+          leaseId,
+          leaseToken,
+          null
+        ));
+      } else if (sub === 'list') {
+        const root = path.resolve(args[2] || '.');
+        print(await new ResourceLeaseStore(root, runId).list());
+      } else if (sub === 'verify') {
+        const authorizationPath = required(args[2], 'authorization JSON path');
+        const root = path.resolve(args[3] || '.');
+        const graph = await new ExecutionRunStore(root, runId).loadGraph();
+        const authorization = await readJsonFile(authorizationPath);
+        const store = new ResourceLeaseStore(root, runId);
+        await store.assertAuthorization(graph, authorization);
+        print({ valid: true, leaseId: authorization.leaseId });
+      } else {
+        throw new Error(
+          'usage: hybrid lease <acquire|release|list|verify> <run-id> ...'
+        );
+      }
       break;
     }
 
@@ -104,6 +149,10 @@ function help() {
     '  hybrid validate-plan <PLAN.md|plan.json>',
     '  hybrid schedule <PLAN.md|plan.json>',
     '  hybrid prepare <input.json>',
+    '  hybrid lease acquire <run-id> <task-id> <attempt-id> [project-root]',
+    '  hybrid lease verify <run-id> <authorization.json> [project-root]',
+    '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
+    '  hybrid lease list <run-id> [project-root]',
     '  hybrid state init [project-root]',
     '  hybrid state get [project-root]',
     '  hybrid wiki lint [wiki-root]',
