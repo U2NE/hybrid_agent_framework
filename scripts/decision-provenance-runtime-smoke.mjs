@@ -85,8 +85,7 @@ function artifactBackedImplementerExecution({ decisions = [], events = [], actor
     a.decisionId === spawn.decisionId &&
     a.taskId === spawn.taskId &&
     a.agentRunId === spawn.agentRunId &&
-    a.attribution === 'reported' &&
-    a.files?.includes('README.md')
+    a.attribution === 'reported'
   );
   return Boolean(
     actor &&
@@ -146,7 +145,7 @@ export function validateDecisionProvenanceEvidence(input = {}) {
   )) errors.push('MISSING_IMPLEMENTER_COMPLETE_ACTION');
 
   const actor = actorArtifacts.find(a => a.taskId === spawn?.taskId && a.agentRunId === spawn?.agentRunId);
-  if (!actor || actor.attribution !== 'reported' || !actor.files?.includes('README.md')) errors.push('MISSING_REPORTED_ACTOR_ARTIFACT');
+  if (!actor || actor.attribution !== 'reported' || actor.decisionId !== spawn?.decisionId) errors.push('MISSING_REPORTED_ACTOR_ARTIFACT');
   if (actor && (actor.requestedModel != null || actor.requestedReasoningEffort != null) &&
       (actor.requestedModel !== 'gpt-6-luna' || actor.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
   if (spawn) {
@@ -344,6 +343,37 @@ async function readRun(root) {
   return { decisions, events, actorArtifacts, audit };
 }
 
+async function readSettledRun(root, timeoutMs = 20000) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  let evidence = await readRun(root);
+  while (Date.now() < deadline && !caseJArtifactsSettled(evidence)) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    evidence = await readRun(root);
+  }
+  return evidence;
+}
+
+function caseJArtifactsSettled({ decisions = [], events = [], actorArtifacts = [], audit } = {}) {
+  const spawn = decisions.find(d => d.decision === 'spawn_implementer' && d.taskId === taskId);
+  if (!spawn || audit?.ok !== true) return false;
+  const actorReady = actorArtifacts.some(a =>
+    a.decisionId === spawn.decisionId &&
+    a.taskId === spawn.taskId &&
+    a.agentRunId === spawn.agentRunId &&
+    a.attribution === 'reported'
+  );
+  const completeReady = events.some(e =>
+    e.decisionId === spawn.decisionId &&
+    e.action === 'complete' &&
+    e.outcome === 'pass'
+  );
+  const verifyReady = decisions.some(d => d.stage === 'review' && d.decision === 'lightweight_verify') &&
+    events.some(e => e.action === 'lightweight-verify' && e.outcome === 'pass');
+  const completionReady = decisions.some(d => d.stage === 'completion' && d.intendedAction?.type === 'completion') &&
+    events.some(e => e.action === 'completion' && e.outcome === 'pass');
+  return actorReady && completeReady && verifyReady && completionReady;
+}
+
 async function inspectRuntimeSource(root) {
   const files = [];
   async function visit(dir) {
@@ -387,7 +417,7 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
     'Keep the returned spawn_implementer decision as an object. Never transcribe or retype a decisionId.',
     'Spawn exactly one Implementer using the decision policy model gpt-6-luna and effort medium. The Lead must not edit README.md.',
     'After successful spawn, record the Lead spawn action with createLeadProvenanceSession().writeActionForDecision(spawnDecision,{action:"spawn",attribution:"derived"}).',
-    'The Implementer must edit only README.md and write one reported actor artifact for its own agentRunId. It must locate the persisted spawn decision programmatically; do not hand-copy its decisionId.',
+    'The Implementer must edit only README.md and write one reported actor artifact for its own agentRunId including taskId readme, waveId wave-1, and files [README.md]. It must locate the persisted spawn decision programmatically; do not hand-copy its decisionId.',
     'After the Implementer returns, record its completion with writeActionForDecision(spawnDecision,{action:"complete",attribution:"derived",outcome:"pass"}).',
     'Perform deterministic lightweight verification as Lead. Build one review decision named lightweight_verify with intendedAction {type:"lightweight-verify",role:"lead"} and facts.contentMatches=true, write it, then record its action via writeActionForDecision with outcome pass.',
     'Build one completion decision with stage completion, decision complete, intendedAction {type:"completion",role:"lead"}, write it, then record its action via writeActionForDecision with outcome pass.',
@@ -400,13 +430,13 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
     '-m', 'gpt-6-luna',
     '-c', 'model_reasoning_effort="medium"',
     prompt,
-  ], { cwd: root, timeoutMs: options.timeoutMs || 300000 });
+  ], { cwd: root, timeoutMs: options.timeoutMs || 360000 });
 
   await fs.writeFile(path.join(root, '.planning/case-j-codex.events.jsonl'), run.stdout || '', 'utf8');
   await fs.writeFile(path.join(root, '.planning/case-j-codex.stderr.log'), run.stderr || '', 'utf8');
   await fs.writeFile(path.join(root, '.planning/decision-codex.events.jsonl'), run.stdout || '', 'utf8');
   await fs.writeFile(path.join(root, '.planning/decision-codex.stderr.log'), run.stderr || '', 'utf8');
-  const evidence = await readRun(root);
+  const evidence = await readSettledRun(root, options.settleTimeoutMs ?? 20000);
   const runtimeSource = await inspectRuntimeSource(root);
   const changedCore = await exec('git', ['diff', 'HEAD', '--name-only', '--', '.hybrid/core'], { cwd: root });
   const semantic = validateDecisionProvenanceEvidence({

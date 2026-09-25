@@ -198,7 +198,7 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     'Keep the two returned spawn_implementer decisions as objects. Never transcribe or retype decisionIds.',
     'Spawn both sibling Implementers with explicit gpt-6-luna / medium before waiting for either worker. Task A owns only src/a.txt; Task B owns only src/b.txt. The Lead must edit neither file.',
     'After each successful spawn, record its Lead spawn action using createLeadProvenanceSession().writeActionForDecision(childDecision,{action:"spawn",attribution:"derived"}). Both spawn actions must be persisted before the first completion action.',
-    'Each worker edits only its owned file and writes one reported actor artifact for its own agentRunId after programmatically locating its persisted spawn decision; do not hand-copy a decisionId.',
+    'Each worker edits only its owned file and writes one reported actor artifact for its own agentRunId after programmatically locating its persisted spawn decision; include taskId, waveId, decisionId, and the exact owned files array. Do not hand-copy a decisionId.',
     'After workers return, record each completion via writeActionForDecision(childDecision,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
     'Verify src/a.txt is exactly A1 and src/b.txt is exactly B1, then run auditDecisionTrace over persisted decisions/events/actor artifacts with exact task ownership and persist audit.json.',
     'Finish only if audit.ok is true and findings is empty. Use runtime run id case-k. Do not modify .hybrid/core. Do not commit.',
@@ -217,10 +217,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
   await fs.writeFile(path.join(root, '.planning/case-k-codex.stderr.log'), run.stderr || '', 'utf8');
   const runtime = await import(pathToFileURL(path.join(root, '.hybrid/core/runtime/index.mjs')));
   const dir = path.join(runtime.resolveHybridRuntimeRoot(root), 'runs', runId);
-  const decisions = await readJsonLines(path.join(dir, 'decisions.jsonl'));
-  const events = await readJsonLines(path.join(dir, 'events.jsonl'));
-  const actorArtifacts = await readActorArtifacts(path.join(dir, 'actors'));
-  const audit = await readJson(path.join(dir, 'audit.json'));
+  const { decisions, events, actorArtifacts, audit } =
+    await readSettledParallelEvidence(dir, options.settleTimeoutMs ?? 20000);
   const changedCore = await exec('git', ['diff', 'HEAD', '--name-only', '--', '.hybrid/core'], { cwd: root });
   const semantic = validateParallelProvenanceEvidence({
     decisions,
@@ -280,6 +278,40 @@ async function project(label) {
   await fs.writeFile(path.join(root, '.planning/CASE-K.json'), JSON.stringify(fixture, null, 2) + '\n');
   return root;
 }
+async function readSettledParallelEvidence(dir, timeoutMs = 20000) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0);
+  let evidence = await readParallelEvidence(dir);
+  while (Date.now() < deadline && !parallelArtifactsSettled(evidence)) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    evidence = await readParallelEvidence(dir);
+  }
+  return evidence;
+}
+
+async function readParallelEvidence(dir) {
+  return {
+    decisions: await readJsonLines(path.join(dir, 'decisions.jsonl')),
+    events: await readJsonLines(path.join(dir, 'events.jsonl')),
+    actorArtifacts: await readActorArtifacts(path.join(dir, 'actors')),
+    audit: await readJson(path.join(dir, 'audit.json')),
+  };
+}
+
+function parallelArtifactsSettled({ decisions = [], events = [], actorArtifacts = [], audit } = {}) {
+  const parent = decisions.find(d => d.decision === 'parallel_wave' && d.stage === 'scheduling');
+  const children = caseKImplementerChildren(decisions, parent);
+  if (children.length !== 2 || audit?.ok !== true) return false;
+  return children.every(child =>
+    events.some(e => e.decisionId === child.decisionId && e.action === 'complete') &&
+    actorArtifacts.some(a =>
+      a.decisionId === child.decisionId &&
+      a.taskId === child.taskId &&
+      a.agentRunId === child.agentRunId &&
+      a.attribution === 'reported'
+    )
+  );
+}
+
 async function readJsonLines(file) {
   try { return (await fs.readFile(file, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
   catch { return []; }
