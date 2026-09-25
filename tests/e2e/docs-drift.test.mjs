@@ -69,6 +69,9 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /Raw token-only/i);
   assert.match(leaseDoc, /independently re-reads `TRANSITIONS\.jsonl`/i);
   assert.match(leaseDoc, /missing or corrupted terminal evidence fails closed/i);
+  assert.match(leaseDoc, /\.transitions\.lock/);
+  assert.match(leaseDoc, /atomic ledger replacement/i);
+  assert.match(leaseDoc, /at most one terminal outcome/i);
 
   for (const alias of ['.agents/skills/plan/SKILL.md', '.codex/skills/plan/SKILL.md']) {
     const stat = await fs.lstat(path.join(root, alias));
@@ -107,5 +110,7 @@ test('current-workspace mutation guard documentation matches the enforced owners
   assert.match(executeSkill, /current-workspace mutation guard/);
   assert.match(executeSkill, /Guard completion alone is not release authority/);
   assert.match(executeSkill, /hybrid lease abort/);
+  assert.match(executeSkill, /Terminal transitions are cross-process fenced/);
+  assert.match(executeSkill, /never create competing terminal IDs/);
   assert.match(guardCore, /WORKSPACE_GUARD_RECONCILIATION_REQUIRED/);
 });

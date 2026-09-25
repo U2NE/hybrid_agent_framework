@@ -118,6 +118,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(executeSkill, /Guard completion alone is not release authority/);
   assert.match(executeSkill, /hybrid lease abort/);
   assert.match(executeSkill, /ExecutionRunStore\.releaseTaskLease/);
+  assert.match(executeSkill, /Terminal transitions are cross-process fenced/);
   await assert.rejects(fs.access(path.join(target, '.codex', 'skills', 'hybrid', 'SKILL.md')));
 
   const role = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-scout.toml'), 'utf8');
@@ -146,6 +147,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(installedAgents, /fresh attempt on that child/);
   assert.match(installedAgents, /Raw token-only\/null-result release is forbidden/);
   assert.match(installedAgents, /task_aborted_reconciled/);
+  assert.match(installedAgents, /only one terminal outcome is permitted per graph\/task\/attempt/);
   assert.match(installedAgents, /per-run durable model budget/);
   assert.match(installedAgents, /default automatic cap is 3 unique Sol stage-attempts per run/);
   assert.match(installedAgents, /MUST NOT self-issue or fabricate a model-budget approval receipt/);

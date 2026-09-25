@@ -14,6 +14,7 @@ import { ResourceLeaseStore } from '../../core/leases/index.mjs';
 import {
   ExecutionRunStore,
   TransitionError,
+  buildTransitionRecord,
   reconcileActivityEvidence,
 } from '../../core/transitions/index.mjs';
 
@@ -437,25 +438,26 @@ test('lease release requires a durable terminal transition with evidence and rep
       error.details.errors.some((item) => /not terminal/.test(item))
   );
 
-  const noEvidence = await runStore.commitTransition({
-    transitionId: 'complete-task-a-no-evidence',
-    graphRevision: graph.revisionId,
-    nodeId: 'task-a',
-    attemptId: 'attempt-release',
-    kind: 'task_completed',
-    effectPolicy: 'reconcile_required',
-    request: { descriptorHash: graph.descriptorHash },
-    evidenceRefs: [],
-  });
   await assert.rejects(
-    () => runStore.releaseTaskLease(
-      acquired.authorization,
-      noEvidence.record.transitionId
-    ),
+    () => runStore.commitTransition({
+      transitionId: 'complete-task-a-no-evidence',
+      graphRevision: graph.revisionId,
+      nodeId: 'task-a',
+      attemptId: 'attempt-release',
+      kind: 'task_completed',
+      effectPolicy: 'reconcile_required',
+      request: { descriptorHash: graph.descriptorHash },
+      evidenceRefs: [],
+    }),
     (error) =>
       error instanceof TransitionError &&
-      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
-      error.details.errors.includes('terminal transition has no evidence')
+      error.code === 'TERMINAL_TRANSITION_EVIDENCE_REQUIRED'
+  );
+  assert.equal(
+    (await runStore.loadTransitions()).some(
+      (record) => record.transitionId === 'complete-task-a-no-evidence'
+    ),
+    false
   );
 
   const completed = await runStore.commitTransition({
@@ -658,6 +660,266 @@ test('same transition request replays while different request is fenced', async 
       request: { descriptorHash: graph.descriptorHash, model: 'gpt-6-sol' },
     }),
     (error) => error instanceof TransitionError && error.code === 'TRANSITION_FENCED'
+  );
+});
+
+test('concurrent identical transition commits across stores converge to one durable record', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const left = new ExecutionRunStore(root, graph.runId);
+  const right = new ExecutionRunStore(root, graph.runId);
+  await left.initializeGraph(graph);
+
+  const input = {
+    transitionId: 'dispatch-concurrent-same',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-concurrent-same',
+    kind: 'task_dispatched',
+    effectPolicy: 'reconcile_required',
+    request: {
+      descriptorHash: graph.descriptorHash,
+      marker: 'same',
+    },
+    evidenceRefs: ['dispatch:concurrent-same'],
+  };
+
+  const [first, second] = await Promise.all([
+    left.commitTransition(input),
+    right.commitTransition(input),
+  ]);
+
+  assert.deepEqual(
+    [first.status, second.status].sort(),
+    ['committed', 'replayed']
+  );
+  const records = await left.loadTransitions();
+  assert.equal(
+    records.filter(
+      (record) => record.transitionId === input.transitionId
+    ).length,
+    1
+  );
+});
+
+test('concurrent conflicting reuse of one transition id has one winner and one fenced loser', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const left = new ExecutionRunStore(root, graph.runId);
+  const right = new ExecutionRunStore(root, graph.runId);
+  await left.initializeGraph(graph);
+
+  const base = {
+    transitionId: 'dispatch-concurrent-conflict',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-concurrent-conflict',
+    kind: 'task_dispatched',
+    effectPolicy: 'reconcile_required',
+    evidenceRefs: ['dispatch:concurrent-conflict'],
+  };
+  const settled = await Promise.allSettled([
+    left.commitTransition({
+      ...base,
+      request: {
+        descriptorHash: graph.descriptorHash,
+        marker: 'left',
+      },
+    }),
+    right.commitTransition({
+      ...base,
+      request: {
+        descriptorHash: graph.descriptorHash,
+        marker: 'right',
+      },
+    }),
+  ]);
+
+  assert.equal(
+    settled.filter((item) => item.status === 'fulfilled').length,
+    1
+  );
+  const rejected = settled.find((item) => item.status === 'rejected');
+  assert.ok(rejected);
+  assert.equal(rejected.reason.code, 'TRANSITION_FENCED');
+
+  const records = await left.loadTransitions();
+  assert.equal(
+    records.filter(
+      (record) => record.transitionId === base.transitionId
+    ).length,
+    1
+  );
+});
+
+test('concurrent terminal outcomes for one task attempt have exactly one winner', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const left = new ExecutionRunStore(root, graph.runId);
+  const right = new ExecutionRunStore(root, graph.runId);
+  await left.initializeGraph(graph);
+
+  const common = {
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-terminal-race',
+    effectPolicy: 'reconcile_required',
+  };
+  const settled = await Promise.allSettled([
+    left.commitTransition({
+      ...common,
+      transitionId: 'terminal-race-completed',
+      kind: 'task_completed',
+      evidenceRefs: ['test:completed'],
+      result: { outcome: 'pass' },
+    }),
+    right.commitTransition({
+      ...common,
+      transitionId: 'terminal-race-aborted',
+      kind: 'task_aborted_reconciled',
+      evidenceRefs: ['reconcile:aborted'],
+      result: { outcome: 'aborted-reconciled' },
+    }),
+  ]);
+
+  assert.equal(
+    settled.filter((item) => item.status === 'fulfilled').length,
+    1
+  );
+  const rejected = settled.find((item) => item.status === 'rejected');
+  assert.ok(rejected);
+  assert.equal(rejected.reason.code, 'TERMINAL_TRANSITION_FENCED');
+
+  const records = await left.loadTransitions();
+  const terminalRecords = records.filter(
+    (record) =>
+      record.graphRevision === graph.revisionId &&
+      record.nodeId === 'task-a' &&
+      record.attemptId === 'attempt-terminal-race' &&
+      ['task_completed', 'task_aborted_reconciled'].includes(record.kind)
+  );
+  assert.equal(terminalRecords.length, 1);
+});
+
+test('persisted duplicate terminal outcomes for one task attempt fail closed on restart', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  await store.initializeGraph(graph);
+  await fs.mkdir(store.runDir, { recursive: true });
+
+  const common = {
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-corrupt-terminal',
+    effectPolicy: 'reconcile_required',
+  };
+  const completed = buildTransitionRecord(graph.runId, {
+    ...common,
+    transitionId: 'corrupt-terminal-completed',
+    kind: 'task_completed',
+    evidenceRefs: ['test:completed'],
+    result: { outcome: 'pass' },
+  });
+  const aborted = buildTransitionRecord(graph.runId, {
+    ...common,
+    transitionId: 'corrupt-terminal-aborted',
+    kind: 'task_aborted_reconciled',
+    evidenceRefs: ['reconcile:aborted'],
+    result: { outcome: 'aborted-reconciled' },
+  });
+  await fs.writeFile(
+    store.transitionsPath,
+    JSON.stringify(completed) + '\n' + JSON.stringify(aborted) + '\n',
+    'utf8'
+  );
+
+  await assert.rejects(
+    () => new ExecutionRunStore(root, graph.runId).loadTransitions(),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'TRANSITION_LEDGER_CORRUPT' &&
+      /multiple terminal outcomes/i.test(error.message)
+  );
+});
+
+test('stale transition lock is reclaimed only after its owner is gone', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const base = new ExecutionRunStore(root, graph.runId);
+  await base.initializeGraph(graph);
+  await fs.mkdir(base.runDir, { recursive: true });
+
+  const input = {
+    transitionId: 'transition-after-stale-lock',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-after-stale-lock',
+    kind: 'task_dispatched',
+    effectPolicy: 'reconcile_required',
+    evidenceRefs: ['dispatch:stale-lock'],
+  };
+
+  await fs.writeFile(
+    base.transitionLockPath,
+    JSON.stringify({
+      pid: process.pid,
+      acquiredAt: new Date(0).toISOString(),
+    }) + '\n',
+    'utf8'
+  );
+  await fs.utimes(
+    base.transitionLockPath,
+    new Date(0),
+    new Date(0)
+  );
+
+  const liveOwnerStore = new ExecutionRunStore(root, graph.runId, {
+    transitionLockTimeoutMs: 75,
+    transitionStaleLockMs: 1,
+  });
+  await assert.rejects(
+    () => liveOwnerStore.commitTransition(input),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'TRANSITION_LOCK_TIMEOUT'
+  );
+
+  let deadPid = 99999999;
+  while (deadPid > 1000000) {
+    try {
+      process.kill(deadPid, 0);
+      deadPid -= 1;
+    } catch (error) {
+      if (error?.code === 'ESRCH') break;
+      deadPid -= 1;
+    }
+  }
+  await fs.writeFile(
+    base.transitionLockPath,
+    JSON.stringify({
+      pid: deadPid,
+      acquiredAt: new Date(0).toISOString(),
+    }) + '\n',
+    'utf8'
+  );
+  await fs.utimes(
+    base.transitionLockPath,
+    new Date(0),
+    new Date(0)
+  );
+
+  const recovered = await new ExecutionRunStore(root, graph.runId, {
+    transitionLockTimeoutMs: 500,
+    transitionStaleLockMs: 1,
+  }).commitTransition(input);
+
+  assert.equal(recovered.status, 'committed');
+  assert.equal(
+    (await base.loadTransitions()).some(
+      (record) => record.transitionId === input.transitionId
+    ),
+    true
   );
 });
 

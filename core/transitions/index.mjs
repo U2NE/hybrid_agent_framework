@@ -12,6 +12,15 @@ import {
 
 export const TRANSITION_SCHEMA = 'hybrid-transition/v1';
 
+const TERMINAL_TRANSITION_KINDS = new Set([
+  'task_completed',
+  'recovered_task_completed',
+  'task_aborted_reconciled',
+]);
+const TRANSITION_LOCK_RETRY_MS = 25;
+const DEFAULT_TRANSITION_LOCK_TIMEOUT_MS = 5000;
+const DEFAULT_TRANSITION_STALE_LOCK_MS = 30000;
+
 export class TransitionError extends Error {
   constructor(message, code = 'TRANSITION_ERROR', details = {}) {
     super(message);
@@ -22,13 +31,22 @@ export class TransitionError extends Error {
 }
 
 export class ExecutionRunStore {
-  constructor(projectRoot, runId) {
+  constructor(projectRoot, runId, options = {}) {
     this.projectRoot = path.resolve(String(projectRoot || '.'));
     this.runId = safeSegment(runId, 'runId');
     this.runDir = path.join(this.projectRoot, '.planning', 'runs', this.runId);
     this.graphPath = path.join(this.runDir, 'GRAPH.json');
     this.graphsDir = path.join(this.runDir, 'graphs');
     this.transitionsPath = path.join(this.runDir, 'TRANSITIONS.jsonl');
+    this.transitionLockPath = path.join(this.runDir, '.transitions.lock');
+    this.transitionLockTimeoutMs = positiveInt(
+      options.transitionLockTimeoutMs,
+      DEFAULT_TRANSITION_LOCK_TIMEOUT_MS
+    );
+    this.transitionStaleLockMs = positiveInt(
+      options.transitionStaleLockMs,
+      DEFAULT_TRANSITION_STALE_LOCK_MS
+    );
     this._queue = Promise.resolve();
   }
 
@@ -460,6 +478,36 @@ export class ExecutionRunStore {
         records.push(record);
       }
     }
+    const terminalByAttempt = new Map();
+    for (const record of records) {
+      if (!isTerminalTransition(record)) continue;
+      const key = JSON.stringify([
+        record.graphRevision,
+        record.nodeId,
+        record.attemptId,
+      ]);
+      const priorTerminal = terminalByAttempt.get(key);
+      if (
+        priorTerminal &&
+        priorTerminal.transitionId !== record.transitionId
+      ) {
+        throw new TransitionError(
+          'transition ledger contains multiple terminal outcomes for one task attempt',
+          'TRANSITION_LEDGER_CORRUPT',
+          {
+            graphRevision: record.graphRevision,
+            nodeId: record.nodeId,
+            attemptId: record.attemptId,
+            transitionIds: [
+              priorTerminal.transitionId,
+              record.transitionId,
+            ],
+          }
+        );
+      }
+      if (!priorTerminal) terminalByAttempt.set(key, record);
+    }
+
     return records;
   }
 
@@ -501,43 +549,145 @@ export class ExecutionRunStore {
 
   async #commitTransition(input) {
     const record = buildTransitionRecord(this.runId, input);
-    await fs.mkdir(this.runDir, { recursive: true });
-    const existing = await this.loadTransitions();
-    const prior = existing.find((item) => item.transitionId === record.transitionId);
+    if (isTerminalTransition(record) && !record.evidenceRefs.length) {
+      throw new TransitionError(
+        'terminal transition requires at least one durable evidence reference',
+        'TERMINAL_TRANSITION_EVIDENCE_REQUIRED',
+        {
+          transitionId: record.transitionId,
+          kind: record.kind,
+        }
+      );
+    }
 
-    if (prior) {
-      if (prior.requestFingerprint !== record.requestFingerprint) {
-        throw new TransitionError(
-          'transition id was reused with a different request fingerprint',
-          'TRANSITION_FENCED',
-          {
-            transitionId: record.transitionId,
-            existingFingerprint: prior.requestFingerprint,
-            attemptedFingerprint: record.requestFingerprint,
-          }
-        );
+    await fs.mkdir(this.runDir, { recursive: true });
+    return this.#withTransitionLock(async () => {
+      const existing = await this.loadTransitions();
+      const prior = existing.find(
+        (item) => item.transitionId === record.transitionId
+      );
+
+      if (prior) {
+        if (prior.requestFingerprint !== record.requestFingerprint) {
+          throw new TransitionError(
+            'transition id was reused with a different request fingerprint',
+            'TRANSITION_FENCED',
+            {
+              transitionId: record.transitionId,
+              existingFingerprint: prior.requestFingerprint,
+              attemptedFingerprint: record.requestFingerprint,
+            }
+          );
+        }
+        return {
+          status: 'replayed',
+          record: prior,
+          path: this.transitionsPath,
+        };
       }
+
+      if (isTerminalTransition(record)) {
+        const priorTerminal = existing.find(
+          (item) =>
+            isTerminalTransition(item) &&
+            item.graphRevision === record.graphRevision &&
+            item.nodeId === record.nodeId &&
+            item.attemptId === record.attemptId
+        );
+        if (priorTerminal) {
+          throw new TransitionError(
+            'task attempt already has a different terminal transition',
+            'TERMINAL_TRANSITION_FENCED',
+            {
+              graphRevision: record.graphRevision,
+              nodeId: record.nodeId,
+              attemptId: record.attemptId,
+              existingTransitionId: priorTerminal.transitionId,
+              existingKind: priorTerminal.kind,
+              attemptedTransitionId: record.transitionId,
+              attemptedKind: record.kind,
+            }
+          );
+        }
+      }
+
+      await atomicTextWrite(
+        this.transitionsPath,
+        [...existing, record]
+          .map((item) => JSON.stringify(item))
+          .join('\n') + '\n'
+      );
+
       return {
-        status: 'replayed',
-        record: prior,
+        status: 'committed',
+        record,
         path: this.transitionsPath,
       };
-    }
-
-    const handle = await fs.open(this.transitionsPath, 'a', 0o644);
-    try {
-      await handle.writeFile(JSON.stringify(record) + '\n', 'utf8');
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
-    return {
-      status: 'committed',
-      record,
-      path: this.transitionsPath,
-    };
+    });
   }
+
+  async #withTransitionLock(fn) {
+    await fs.mkdir(this.runDir, { recursive: true });
+    const startedAt = Date.now();
+    let handle = null;
+
+    while (!handle) {
+      try {
+        handle = await fs.open(this.transitionLockPath, 'wx', 0o600);
+        await handle.writeFile(
+          JSON.stringify({
+            pid: process.pid,
+            acquiredAt: new Date().toISOString(),
+          }) + '\n',
+          'utf8'
+        );
+        await handle.sync();
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+        await this.#removeStaleTransitionLockIfSafe();
+        if (Date.now() - startedAt >= this.transitionLockTimeoutMs) {
+          throw new TransitionError(
+            'timed out acquiring durable transition ledger lock',
+            'TRANSITION_LOCK_TIMEOUT',
+            { lockPath: this.transitionLockPath }
+          );
+        }
+        await sleep(TRANSITION_LOCK_RETRY_MS);
+      }
+    }
+
+    try {
+      return await fn();
+    } finally {
+      await handle.close().catch(() => {});
+      await releaseOwnedLock(this.transitionLockPath, process.pid);
+    }
+  }
+
+  async #removeStaleTransitionLockIfSafe() {
+    try {
+      const stat = await fs.stat(this.transitionLockPath);
+      if (Date.now() - stat.mtimeMs <= this.transitionStaleLockMs) return;
+
+      let ownerPid = null;
+      try {
+        const parsed = JSON.parse(
+          await fs.readFile(this.transitionLockPath, 'utf8')
+        );
+        if (Number.isInteger(parsed?.pid) && parsed.pid > 0) {
+          ownerPid = parsed.pid;
+        }
+      } catch {
+        // Malformed lock metadata is reclaimable after the stale-age bound.
+      }
+
+      if (ownerPid && processIsAlive(ownerPid)) return;
+      await fs.rm(this.transitionLockPath, { force: true });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+
 }
 
 export function buildTransitionRecord(runId, input = {}) {
@@ -826,6 +976,81 @@ function validateTransitionRecord(record, expectedRunId) {
     );
   }
   return true;
+}
+
+function isTerminalTransition(record) {
+  return TERMINAL_TRANSITION_KINDS.has(record?.kind);
+}
+
+async function atomicTextWrite(target, text) {
+  const temp =
+    target +
+    '.tmp-' +
+    process.pid +
+    '-' +
+    Date.now() +
+    '-' +
+    Math.random().toString(16).slice(2);
+  let handle = null;
+  try {
+    handle = await fs.open(temp, 'wx', 0o644);
+    await handle.writeFile(text, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(temp, target);
+    await fs.chmod(target, 0o644);
+  } catch (error) {
+    if (handle) await handle.close().catch(() => {});
+    await fs.rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function releaseOwnedLock(lockPath, expectedPid) {
+  let ownerPid = null;
+  try {
+    const parsed = JSON.parse(await fs.readFile(lockPath, 'utf8'));
+    if (Number.isInteger(parsed?.pid) && parsed.pid > 0) {
+      ownerPid = parsed.pid;
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return;
+    throw error;
+  }
+
+  if (ownerPid !== expectedPid) {
+    throw new TransitionError(
+      'durable transition lock ownership changed',
+      'TRANSITION_LOCK_FENCED',
+      {
+        lockPath,
+        expectedPid,
+        observedPid: ownerPid,
+      }
+    );
+  }
+  await fs.rm(lockPath, { force: true });
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'EPERM') return true;
+    if (error?.code === 'ESRCH') return false;
+    return true;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function positiveInt(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
 async function atomicJsonWrite(target, value) {
