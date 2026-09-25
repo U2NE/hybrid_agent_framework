@@ -5,8 +5,11 @@ import {
   ExecutionGraphError,
   executionApprovalSubject,
   materialRevisionReasons,
+  proposeMaterialRevision,
   requestLeaseExtension,
+  sealApprovedMaterialRevision,
   sealExecutionPlan,
+  validateMaterialRevisionProposal,
   validateSealedExecutionGraph,
 } from '../../core/execution-graph/index.mjs';
 import {
@@ -290,6 +293,309 @@ test('material semantic lease request requires new user approval and does not mu
   assert.equal(result.status, 'user-approval-required');
   assert.deepEqual(result.reasons, ['PUBLIC_API_CHANGE', 'SECURITY_POSTURE_CHANGE']);
   assert.equal(result.graph, graph);
+});
+
+test('material revision proposal binds a changed subject without mutating the parent graph', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material',
+    revisionId: 'G1',
+  });
+  const revised = structuredClone(plan);
+  revised.tasks[1].goal = 'Update client and public response contract';
+  revised.tasks[1].files_modified = ['src/client-v2.js'];
+
+  const pending = proposeMaterialRevision(parent, revised, {
+    publicApiChanged: true,
+    securityPostureChanged: true,
+  });
+
+  assert.equal(pending.applied, false);
+  assert.equal(pending.status, 'user-approval-required');
+  assert.equal(pending.graph, parent);
+  assert.equal(pending.proposal.schema, 'hybrid-material-revision-proposal/v1');
+  assert.equal(pending.proposal.parentDescriptorHash, parent.descriptorHash);
+  assert.equal(pending.proposal.parentRevisionId, 'G1');
+  assert.equal(pending.proposal.revisionId, 'G2');
+  assert.notEqual(pending.approvalSubject.planHash, parent.planHash);
+  assert.equal(pending.approvalSubject.specHash, parent.specHash);
+  assert.deepEqual(
+    pending.reasons,
+    ['PUBLIC_API_CHANGE', 'SECURITY_POSTURE_CHANGE']
+  );
+  assert.equal(
+    validateMaterialRevisionProposal(parent, revised, pending.proposal),
+    true
+  );
+});
+
+test('material revision cannot request approval for an unchanged execution subject', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-unchanged',
+  });
+
+  assert.throws(
+    () => proposeMaterialRevision(parent, plan, {
+      material: true,
+      publicApiChanged: true,
+    }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'MATERIAL_REVISION_SUBJECT_UNCHANGED'
+  );
+
+  const revised = structuredClone(plan);
+  revised.phase = 'auth-v2';
+  assert.throws(
+    () => proposeMaterialRevision(parent, revised, {}),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'MATERIAL_REVISION_REASON_REQUIRED'
+  );
+});
+
+test('approved material revision creates a new receipt-bound child graph', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-approved',
+    revisionId: 'G1',
+  });
+  const revised = structuredClone(plan);
+  revised.phase = 'auth-v2';
+  revised.tasks[0].goal = 'Update API with a new public conflict contract';
+
+  const pending = proposeMaterialRevision(parent, revised, {
+    productBehaviorChanged: true,
+    publicApiChanged: true,
+  });
+  const receipt = createUserApprovalReceipt({
+    ...pending.approvalSubject,
+    approvalId: 'material-approval-2',
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:00:00+09:00',
+  });
+  const child = sealApprovedMaterialRevision(
+    parent,
+    revised,
+    pending.proposal,
+    { approvalReceipt: receipt }
+  );
+
+  assert.equal(child.revisionId, 'G2');
+  assert.equal(child.parentDescriptorHash, parent.descriptorHash);
+  assert.notEqual(child.descriptorHash, parent.descriptorHash);
+  assert.equal(child.approvalScopeHash, receipt.receiptHash);
+  assert.notEqual(child.approvalScopeHash, parent.approvalScopeHash);
+  assert.deepEqual(child.approvalReceipt, receipt);
+  assert.equal(child.planHash, pending.approvalSubject.planHash);
+  assert.equal(child.specHash, pending.approvalSubject.specHash);
+  assert.equal(validateSealedExecutionGraph(child), true);
+
+  const amendment = child.amendments.at(-1);
+  assert.equal(amendment.kind, 'material-revision');
+  assert.equal(amendment.proposalHash, pending.proposal.proposalHash);
+  assert.equal(amendment.parentDescriptorHash, parent.descriptorHash);
+  assert.equal(amendment.priorApprovalScopeHash, parent.approvalScopeHash);
+  assert.equal(amendment.approvalScopeHash, receipt.receiptHash);
+  assert.deepEqual(
+    amendment.reasons,
+    ['PRODUCT_BEHAVIOR_CHANGE', 'PUBLIC_API_CHANGE']
+  );
+
+  const operationalChild = requestLeaseExtension(child, {
+    taskId: 'client',
+    resources: [{ key: 'contract:client-v2', mode: 'exclusive' }],
+  }).graph;
+  assert.equal(operationalChild.approvalScopeHash, child.approvalScopeHash);
+  assert.equal(validateSealedExecutionGraph(operationalChild), true);
+});
+
+test('material revision requires a fresh approval identity even when receipt matches revised subject', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-fresh',
+  });
+  const revised = structuredClone(plan);
+  revised.tasks[0].goal = 'Materially change API behavior';
+
+  const pending = proposeMaterialRevision(parent, revised, {
+    productBehaviorChanged: true,
+  });
+  const reusedIdentity = createUserApprovalReceipt({
+    ...pending.approvalSubject,
+    approvalId: parent.approvalReceipt.approvalId,
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:01:00+09:00',
+  });
+
+  assert.throws(
+    () => sealApprovedMaterialRevision(
+      parent,
+      revised,
+      pending.proposal,
+      { approvalReceipt: reusedIdentity }
+    ),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'MATERIAL_REVISION_FRESH_APPROVAL_REQUIRED'
+  );
+});
+
+test('material revision proposal fences plan and proposal tampering before sealing', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-tamper',
+  });
+  const revised = structuredClone(plan);
+  revised.tasks[1].goal = 'Materially change client behavior';
+
+  const pending = proposeMaterialRevision(parent, revised, {
+    productBehaviorChanged: true,
+  });
+
+  const changedAfterProposal = structuredClone(revised);
+  changedAfterProposal.tasks[1].files_modified = ['src/unapproved.js'];
+  assert.throws(
+    () => validateMaterialRevisionProposal(
+      parent,
+      changedAfterProposal,
+      pending.proposal
+    ),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'PLAN_HASH_MISMATCH'
+  );
+
+  const tamperedProposal = structuredClone(pending.proposal);
+  tamperedProposal.reasons.push('PUBLIC_API_CHANGE');
+  assert.throws(
+    () => validateMaterialRevisionProposal(parent, revised, tamperedProposal),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'INVALID_MATERIAL_REVISION_PROPOSAL' &&
+      error.details.errors.includes('proposal hash mismatch')
+  );
+});
+
+test('material proposal with malformed approval subject fails as a proposal error', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-bad-subject',
+  });
+  const revised = structuredClone(plan);
+  revised.phase = 'v2';
+  const pending = proposeMaterialRevision(parent, revised, {
+    featureScopeChanged: true,
+  });
+
+  const malformed = structuredClone(pending.proposal);
+  delete malformed.approvalSubject;
+  assert.throws(
+    () => validateMaterialRevisionProposal(parent, revised, malformed),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'INVALID_MATERIAL_REVISION_PROPOSAL' &&
+      error.details.errors.includes('invalid approval subject')
+  );
+});
+
+test('successive material revisions preserve approval ancestry and latest semantic authority', () => {
+  const first = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-chain',
+    revisionId: 'G1',
+  });
+
+  const plan2 = structuredClone(plan);
+  plan2.phase = 'v2';
+  const proposal2 = proposeMaterialRevision(first, plan2, {
+    featureScopeChanged: true,
+  });
+  const receipt2 = createUserApprovalReceipt({
+    ...proposal2.approvalSubject,
+    approvalId: 'chain-approval-2',
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:03:00+09:00',
+  });
+  const second = sealApprovedMaterialRevision(
+    first,
+    plan2,
+    proposal2.proposal,
+    { approvalReceipt: receipt2 }
+  );
+
+  const plan3 = structuredClone(plan2);
+  plan3.phase = 'v3';
+  plan3.tasks[0].goal = 'Change behavior again';
+  const proposal3 = proposeMaterialRevision(second, plan3, {
+    productBehaviorChanged: true,
+  });
+  const receipt3 = createUserApprovalReceipt({
+    ...proposal3.approvalSubject,
+    approvalId: 'chain-approval-3',
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:04:00+09:00',
+  });
+  const third = sealApprovedMaterialRevision(
+    second,
+    plan3,
+    proposal3.proposal,
+    { approvalReceipt: receipt3 }
+  );
+
+  assert.equal(third.revisionId, 'G3');
+  assert.equal(third.parentDescriptorHash, second.descriptorHash);
+  assert.equal(third.approvalScopeHash, receipt3.receiptHash);
+  assert.equal(third.amendments.filter((item) => item.kind === 'material-revision').length, 2);
+  assert.equal(third.amendments.at(-1).priorApprovalScopeHash, receipt2.receiptHash);
+  assert.equal(third.amendments.at(-1).approvalScopeHash, receipt3.receiptHash);
+  assert.equal(validateSealedExecutionGraph(third), true);
+});
+
+test('SPEC-bound material revision requires the exact approved SPEC content again', () => {
+  const parent = sealApprovedExecutionPlan(plan, {
+    runId: 'run-material-spec',
+  });
+  const revisedSpec = {
+    goal: 'Require conflict responses to hide account existence',
+    security: 'enumeration-resistant',
+  };
+
+  const pending = proposeMaterialRevision(parent, plan, {
+    spec: revisedSpec,
+    securityPostureChanged: true,
+  });
+  assert.equal(pending.proposal.specBinding, 'content');
+  assert.notEqual(pending.approvalSubject.specHash, parent.specHash);
+
+  assert.throws(
+    () => validateMaterialRevisionProposal(parent, plan, pending.proposal),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'MATERIAL_REVISION_SPEC_REQUIRED'
+  );
+
+  assert.throws(
+    () => validateMaterialRevisionProposal(
+      parent,
+      plan,
+      pending.proposal,
+      { spec: { ...revisedSpec, security: 'weaker' } }
+    ),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'SPEC_HASH_MISMATCH'
+  );
+
+  const receipt = createUserApprovalReceipt({
+    ...pending.approvalSubject,
+    approvalId: 'material-spec-approval',
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:02:00+09:00',
+  });
+  const child = sealApprovedMaterialRevision(
+    parent,
+    plan,
+    pending.proposal,
+    { spec: revisedSpec, approvalReceipt: receipt }
+  );
+  assert.equal(child.specHash, pending.approvalSubject.specHash);
+  assert.equal(child.planHash, parent.planHash);
+  assert.equal(validateSealedExecutionGraph(child), true);
 });
 
 test('material revision classification is deterministic and explicit', () => {

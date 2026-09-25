@@ -88,6 +88,8 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(installedHelp.stdout, /hybrid lease acquire/);
   assert.match(installedHelp.stdout, /hybrid model-budget reserve/);
   assert.match(installedHelp.stdout, /hybrid model-budget verify/);
+  assert.match(installedHelp.stdout, /hybrid revision propose/);
+  assert.match(installedHelp.stdout, /hybrid revision apply/);
 
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);
@@ -111,6 +113,9 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   const installedAgents = await fs.readFile(path.join(target, 'AGENTS.md'), 'utf8');
   assert.match(installedAgents, /User approval is an authority boundary/);
   assert.match(installedAgents, /MUST NOT self-issue a receipt/);
+  assert.match(installedAgents, /hybrid revision propose/);
+  assert.match(installedAgents, /hybrid revision apply/);
+  assert.match(installedAgents, /never reuse the parent approval/);
   assert.match(installedAgents, /per-run durable model budget/);
   assert.match(installedAgents, /default automatic cap is 3 unique Sol stage-attempts per run/);
   assert.match(installedAgents, /MUST NOT self-issue or fabricate a model-budget approval receipt/);

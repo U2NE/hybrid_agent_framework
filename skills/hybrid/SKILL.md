@@ -53,3 +53,5 @@ Do not dump the full conversation into every worker.
 ## Approval gate
 
 Complex or ambiguous work must have an approved SPEC before implementation unless the user explicitly requests a safe, bounded direct change.
+
+If an already approved execution needs a material product/API/schema/scope/requirement/security change, do not mutate the current sealed graph or reuse its receipt. Use the material revision path: build a revised PLAN/SPEC, run `hybrid revision propose` (or `proposeMaterialRevision()`) to obtain the exact new approval subject, wait for a fresh explicit user approval receipt, then run `hybrid revision apply`. The apply step revalidates PLAN/SPEC/proposal integrity and publishes the child only through the active-lease-fenced graph transition.

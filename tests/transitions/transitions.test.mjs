@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { requestLeaseExtension } from '../../core/execution-graph/index.mjs';
+import {
+  proposeMaterialRevision,
+  requestLeaseExtension,
+  sealApprovedMaterialRevision,
+} from '../../core/execution-graph/index.mjs';
+import { createUserApprovalReceipt } from '../../core/approval/index.mjs';
 import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import { ResourceLeaseStore } from '../../core/leases/index.mjs';
 import {
@@ -120,6 +125,65 @@ test('graph advancement is fenced by active dispatch leases and succeeds after r
   assert.equal(
     (await runStore.loadGraph()).descriptorHash,
     amendedResult.graph.descriptorHash
+  );
+});
+
+test('approved material child cannot publish across an active parent lease', async () => {
+  const root = await tempProject();
+  const parent = graphFor();
+  const runStore = new ExecutionRunStore(root, parent.runId);
+  const leaseStore = new ResourceLeaseStore(root, parent.runId);
+  await runStore.initializeGraph(parent);
+
+  const revisedPlan = {
+    phase: 'material-v2',
+    tasks: [
+      {
+        id: 'task-a',
+        files_modified: ['src/a-v2.js'],
+        depends_on: [],
+        resources: [],
+        effect_policy: 'reconcile_required',
+        owner: 'implementer',
+      },
+    ],
+  };
+  const pending = proposeMaterialRevision(parent, revisedPlan, {
+    productBehaviorChanged: true,
+  });
+  const receipt = createUserApprovalReceipt({
+    ...pending.approvalSubject,
+    approvalId: 'material-transition-approval',
+    approvedBy: 'user',
+    approvedAt: '2026-09-26T07:10:00+09:00',
+  });
+  const child = sealApprovedMaterialRevision(
+    parent,
+    revisedPlan,
+    pending.proposal,
+    { approvalReceipt: receipt }
+  );
+
+  const lease = await leaseStore.acquire(parent, 'task-a', 'attempt-material-parent');
+  await assert.rejects(
+    () => runStore.advanceGraph(child),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'GRAPH_ADVANCE_ACTIVE_LEASES'
+  );
+  assert.equal((await runStore.loadGraph()).descriptorHash, parent.descriptorHash);
+
+  await leaseStore.release(
+    lease.authorization.leaseId,
+    lease.authorization.leaseToken,
+    { outcome: 'reconciled-before-material-revision' }
+  );
+  const advanced = await runStore.advanceGraph(child);
+  assert.equal(advanced.status, 'advanced');
+  assert.equal((await runStore.loadGraph()).descriptorHash, child.descriptorHash);
+  assert.equal(
+    (await runStore.loadGraphRevision(parent.descriptorHash)).descriptorHash,
+    parent.descriptorHash
   );
 });
 

@@ -8,6 +8,7 @@ import { roleCapabilityPolicy, validateRoleTaskContract } from '../capabilities/
 import { validateUserApprovalReceipt } from '../approval/index.mjs';
 
 export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v3';
+export const MATERIAL_REVISION_PROPOSAL_SCHEMA = 'hybrid-material-revision-proposal/v1';
 
 const MATERIAL_FLAGS = Object.freeze({
   productBehaviorChanged: 'PRODUCT_BEHAVIOR_CHANGE',
@@ -157,6 +158,49 @@ export function validateSealedExecutionGraph(graph) {
   if (!graph.approvalReceipt || typeof graph.approvalReceipt !== 'object' || Array.isArray(graph.approvalReceipt)) {
     errors.push('missing approvalReceipt');
   }
+  if (
+    graph.parentDescriptorHash !== null &&
+    (typeof graph.parentDescriptorHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(graph.parentDescriptorHash))
+  ) {
+    errors.push('invalid parentDescriptorHash');
+  }
+  if (Array.isArray(graph.amendments)) {
+    const materialAmendments = graph.amendments.filter(
+      (amendment) => amendment?.kind === 'material-revision'
+    );
+    for (const amendment of materialAmendments) {
+      const amendmentReasons = normalizeMaterialReasonCodes(amendment.reasons);
+      if (
+        !amendmentReasons.length ||
+        canonical(amendmentReasons) !== canonical(amendment.reasons)
+      ) {
+        errors.push('invalid material revision amendment reasons');
+      }
+      for (const field of [
+        'proposalHash',
+        'parentDescriptorHash',
+        'priorSpecHash',
+        'priorPlanHash',
+        'priorApprovalScopeHash',
+        'approvalScopeHash',
+      ]) {
+        if (
+          typeof amendment?.[field] !== 'string' ||
+          !/^[0-9a-f]{64}$/.test(amendment[field])
+        ) {
+          errors.push('invalid material revision amendment ' + field);
+        }
+      }
+    }
+    const latestMaterial = materialAmendments.at(-1);
+    if (
+      latestMaterial &&
+      latestMaterial.approvalScopeHash !== graph.approvalScopeHash
+    ) {
+      errors.push('latest material revision approval mismatch');
+    }
+  }
 
   if (!errors.length) {
     try {
@@ -254,6 +298,232 @@ export function executionApprovalSubject(plan, options = {}) {
   const normalizedTasks = tasks.map((task) => normalizeTask(task));
   buildExecutionWaves(normalizedTasks);
   return executionApprovalSubjectFromNormalized(plan, normalizedTasks, options);
+}
+
+export function proposeMaterialRevision(parentGraph, plan, input = {}) {
+  validateSealedExecutionGraph(parentGraph);
+  const reasons = materialRevisionReasons(input);
+  if (!reasons.length) {
+    throw new ExecutionGraphError(
+      'material revision proposal requires at least one material reason',
+      'MATERIAL_REVISION_REASON_REQUIRED'
+    );
+  }
+
+  const revisionId = String(
+    input.revisionId || nextRevisionId(parentGraph.revisionId)
+  ).trim();
+  if (!revisionId || revisionId === parentGraph.revisionId) {
+    throw new ExecutionGraphError(
+      'material revision requires a distinct child revisionId',
+      'INVALID_REVISION'
+    );
+  }
+
+  const subjectOptions = materialRevisionSubjectOptions(parentGraph, input);
+  const approvalSubject = executionApprovalSubject(plan, {
+    runId: parentGraph.runId,
+    ...subjectOptions,
+  });
+  assertMaterialSubjectChanged(parentGraph, approvalSubject);
+
+  const proposal = {
+    schema: MATERIAL_REVISION_PROPOSAL_SCHEMA,
+    runId: parentGraph.runId,
+    parentDescriptorHash: parentGraph.descriptorHash,
+    parentRevisionId: parentGraph.revisionId,
+    revisionId,
+    reasons,
+    specBinding: input.spec !== undefined ? 'content' : 'hash',
+    approvalSubject,
+  };
+  proposal.proposalHash = materialRevisionProposalHash(proposal);
+
+  return {
+    applied: false,
+    status: 'user-approval-required',
+    reasons: [...reasons],
+    approvalSubject: structuredClone(approvalSubject),
+    proposal: Object.freeze(structuredClone(proposal)),
+    graph: parentGraph,
+  };
+}
+
+export function validateMaterialRevisionProposal(
+  parentGraph,
+  plan,
+  proposal,
+  options = {}
+) {
+  validateSealedExecutionGraph(parentGraph);
+  if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) {
+    throw new ExecutionGraphError(
+      'material revision proposal must be an object',
+      'INVALID_MATERIAL_REVISION_PROPOSAL'
+    );
+  }
+
+  const errors = [];
+  if (proposal.schema !== MATERIAL_REVISION_PROPOSAL_SCHEMA) errors.push('invalid schema');
+  if (proposal.runId !== parentGraph.runId) errors.push('runId mismatch');
+  if (proposal.parentDescriptorHash !== parentGraph.descriptorHash) {
+    errors.push('parent descriptor mismatch');
+  }
+  if (proposal.parentRevisionId !== parentGraph.revisionId) {
+    errors.push('parent revision mismatch');
+  }
+  if (
+    typeof proposal.revisionId !== 'string' ||
+    !proposal.revisionId.trim() ||
+    proposal.revisionId === parentGraph.revisionId
+  ) {
+    errors.push('invalid child revision');
+  }
+  if (!['content', 'hash'].includes(proposal.specBinding)) {
+    errors.push('invalid spec binding');
+  }
+  if (
+    !proposal.approvalSubject ||
+    typeof proposal.approvalSubject !== 'object' ||
+    Array.isArray(proposal.approvalSubject) ||
+    proposal.approvalSubject.runId !== parentGraph.runId ||
+    typeof proposal.approvalSubject.specHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(proposal.approvalSubject.specHash) ||
+    typeof proposal.approvalSubject.planHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(proposal.approvalSubject.planHash)
+  ) {
+    errors.push('invalid approval subject');
+  }
+
+  const reasons = normalizeMaterialReasonCodes(proposal.reasons);
+  if (!reasons.length || canonical(reasons) !== canonical(proposal.reasons)) {
+    errors.push('invalid material reasons');
+  }
+
+  if (
+    typeof proposal.proposalHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(proposal.proposalHash) ||
+    proposal.proposalHash !== materialRevisionProposalHash(proposal)
+  ) {
+    errors.push('proposal hash mismatch');
+  }
+
+  if (errors.length) {
+    throw new ExecutionGraphError(
+      'material revision proposal validation failed: ' + errors.join('; '),
+      'INVALID_MATERIAL_REVISION_PROPOSAL',
+      { errors }
+    );
+  }
+
+  let subjectOptions;
+  if (proposal.specBinding === 'content') {
+    if (options.spec === undefined) {
+      throw new ExecutionGraphError(
+        'material revision proposal requires the approved SPEC content to be supplied again',
+        'MATERIAL_REVISION_SPEC_REQUIRED'
+      );
+    }
+    subjectOptions = {
+      spec: options.spec,
+      specHash: proposal.approvalSubject.specHash,
+      planHash: proposal.approvalSubject.planHash,
+    };
+  } else {
+    subjectOptions = options.spec !== undefined
+      ? {
+          spec: options.spec,
+          specHash: proposal.approvalSubject.specHash,
+          planHash: proposal.approvalSubject.planHash,
+        }
+      : {
+          specHash: proposal.approvalSubject.specHash,
+          planHash: proposal.approvalSubject.planHash,
+        };
+  }
+
+  const observedSubject = executionApprovalSubject(plan, {
+    runId: parentGraph.runId,
+    ...subjectOptions,
+  });
+  if (canonical(observedSubject) !== canonical(proposal.approvalSubject)) {
+    throw new ExecutionGraphError(
+      'material revision plan/SPEC no longer matches the proposed approval subject',
+      'MATERIAL_REVISION_SUBJECT_MISMATCH',
+      {
+        expected: structuredClone(proposal.approvalSubject),
+        actual: observedSubject,
+      }
+    );
+  }
+  assertMaterialSubjectChanged(parentGraph, observedSubject);
+  return true;
+}
+
+export function sealApprovedMaterialRevision(
+  parentGraph,
+  plan,
+  proposal,
+  options = {}
+) {
+  validateMaterialRevisionProposal(parentGraph, plan, proposal, options);
+
+  const approvalReceipt = requireApprovalReceipt(
+    options.approvalReceipt,
+    proposal.approvalSubject
+  );
+  if (
+    approvalReceipt.receiptHash === parentGraph.approvalScopeHash ||
+    approvalReceipt.approvalId === parentGraph.approvalReceipt?.approvalId
+  ) {
+    throw new ExecutionGraphError(
+      'material revision requires a fresh explicit user approval receipt',
+      'MATERIAL_REVISION_FRESH_APPROVAL_REQUIRED'
+    );
+  }
+
+  const specOptions = proposal.specBinding === 'content'
+    ? {
+        spec: options.spec,
+        specHash: proposal.approvalSubject.specHash,
+      }
+    : options.spec !== undefined
+      ? {
+          spec: options.spec,
+          specHash: proposal.approvalSubject.specHash,
+        }
+      : {
+          specHash: proposal.approvalSubject.specHash,
+        };
+
+  const base = sealExecutionPlan(plan, {
+    runId: parentGraph.runId,
+    revisionId: proposal.revisionId,
+    concurrencyLimit: parentGraph.concurrencyLimit,
+    terminalVerificationNodeId: parentGraph.terminalVerificationNodeId,
+    planHash: proposal.approvalSubject.planHash,
+    ...specOptions,
+    approvalReceipt,
+  });
+
+  const child = structuredClone(base);
+  delete child.descriptorHash;
+  child.parentDescriptorHash = parentGraph.descriptorHash;
+  child.amendments = [
+    ...parentGraph.amendments.map((item) => structuredClone(item)),
+    {
+      kind: 'material-revision',
+      proposalHash: proposal.proposalHash,
+      parentDescriptorHash: parentGraph.descriptorHash,
+      reasons: [...proposal.reasons],
+      priorSpecHash: parentGraph.specHash,
+      priorPlanHash: parentGraph.planHash,
+      priorApprovalScopeHash: parentGraph.approvalScopeHash,
+      approvalScopeHash: approvalReceipt.receiptHash,
+    },
+  ];
+
+  return sealGraph(child);
 }
 
 export function requestLeaseExtension(graph, input = {}) {
@@ -360,6 +630,50 @@ export function materialRevisionReasons(input = {}) {
 
 export function executionGraphHash(graph) {
   return hashGraph(graph);
+}
+
+function materialRevisionSubjectOptions(parentGraph, input) {
+  if (input.spec !== undefined) {
+    return {
+      spec: input.spec,
+      ...(input.specHash !== undefined ? { specHash: input.specHash } : {}),
+      ...(input.planHash !== undefined ? { planHash: input.planHash } : {}),
+    };
+  }
+  return {
+    specHash: input.specHash !== undefined ? input.specHash : parentGraph.specHash,
+    ...(input.planHash !== undefined ? { planHash: input.planHash } : {}),
+  };
+}
+
+function assertMaterialSubjectChanged(parentGraph, approvalSubject) {
+  if (
+    approvalSubject.specHash === parentGraph.specHash &&
+    approvalSubject.planHash === parentGraph.planHash
+  ) {
+    throw new ExecutionGraphError(
+      'material revision must change the approved SPEC or normalized execution plan',
+      'MATERIAL_REVISION_SUBJECT_UNCHANGED'
+    );
+  }
+}
+
+function materialRevisionProposalHash(proposal) {
+  const copy = structuredClone(proposal);
+  delete copy.proposalHash;
+  return hashValue(copy);
+}
+
+function normalizeMaterialReasonCodes(reasons) {
+  const allowed = new Set([
+    'EXPLICIT_MATERIAL_REVISION',
+    ...Object.values(MATERIAL_FLAGS),
+  ]);
+  return [...new Set(
+    (Array.isArray(reasons) ? reasons : [])
+      .map((reason) => String(reason || '').trim())
+      .filter((reason) => allowed.has(reason))
+  )].sort();
 }
 
 function taskNode(task, capabilityContract) {

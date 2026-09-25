@@ -8,6 +8,10 @@ import { prepareExecution } from '../core/orchestrator/index.mjs';
 import { StateStore } from '../core/state/index.mjs';
 import { ExecutionRunStore } from '../core/transitions/index.mjs';
 import { ResourceLeaseStore } from '../core/leases/index.mjs';
+import {
+  proposeMaterialRevision,
+  sealApprovedMaterialRevision,
+} from '../core/execution-graph/index.mjs';
 import { ModelBudgetStore } from '../core/routing/budget.mjs';
 import { ingestWiki, lintWiki, queryWiki } from '../core/wiki/index.mjs';
 
@@ -75,6 +79,48 @@ try {
       } else {
         throw new Error(
           'usage: hybrid lease <acquire|release|list|verify> <run-id> ...'
+        );
+      }
+      break;
+    }
+
+    case 'revision': {
+      const sub = args[0];
+      const runId = required(args[1], 'run id');
+      const inputPath = required(args[2], 'revision input JSON path');
+      const root = path.resolve(args[3] || '.');
+      const input = await readJsonFile(inputPath);
+      const runStore = new ExecutionRunStore(root, runId);
+      const parentGraph = await runStore.loadGraph();
+
+      if (sub === 'propose') {
+        const plan = requiredObject(input.plan, 'revision plan');
+        print(proposeMaterialRevision(parentGraph, plan, input));
+      } else if (sub === 'apply') {
+        const plan = requiredObject(input.plan, 'revision plan');
+        const proposal = requiredObject(input.proposal, 'revision proposal');
+        const approvalReceipt = requiredObject(
+          input.approvalReceipt,
+          'user approval receipt'
+        );
+        const child = sealApprovedMaterialRevision(
+          parentGraph,
+          plan,
+          proposal,
+          {
+            ...(input.spec !== undefined ? { spec: input.spec } : {}),
+            approvalReceipt,
+          }
+        );
+        const advanced = await runStore.advanceGraph(child);
+        print({
+          status: advanced.status,
+          graph: advanced.graph,
+          path: advanced.path,
+        });
+      } else {
+        throw new Error(
+          'usage: hybrid revision <propose|apply> <run-id> <input.json> [project-root]'
         );
       }
       break;
@@ -183,6 +229,13 @@ function required(value, label) {
   return value;
 }
 
+function requiredObject(value, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('missing or invalid ' + label);
+  }
+  return value;
+}
+
 function print(value) {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -199,6 +252,8 @@ function help() {
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',
     '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
     '  hybrid lease list <run-id> [project-root]',
+    '  hybrid revision propose <run-id> <input.json> [project-root]',
+    '  hybrid revision apply <run-id> <input.json> [project-root]',
     '  hybrid model-budget reserve <run-id> <stage-id> <attempt-id> <route.json> [project-root]',
     '  hybrid model-budget verify <run-id> <stage-id> <attempt-id> <route.json> <authorization.json> [project-root]',
     '  hybrid model-budget approve <run-id> <user-approval-receipt.json> [project-root]',

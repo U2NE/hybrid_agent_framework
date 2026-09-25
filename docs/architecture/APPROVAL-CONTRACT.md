@@ -51,6 +51,38 @@ A new explicit user approval is required when a revision changes any material se
 
 A material request does not mutate the sealed graph before the new approval is received.
 
+### Material revision protocol
+
+Material changes use a two-step proposal/apply protocol.
+
+`proposeMaterialRevision(parentGraph, revisedPlan, input)`:
+
+- validates the current sealed parent graph;
+- requires at least one explicit material reason;
+- computes a new approval subject from the revised normalized PLAN and revised/retained SPEC;
+- rejects a "material" proposal whose SPEC and PLAN hashes are both unchanged;
+- binds the proposal to the exact parent descriptor/revision, child revision, reason set, SPEC binding mode, and approval subject through `hybrid-material-revision-proposal/v1` plus `proposalHash`;
+- returns `user-approval-required` without changing the durable current graph.
+
+After a real user approves that exact subject, `sealApprovedMaterialRevision()`:
+
+- revalidates proposal integrity;
+- recomputes the PLAN/SPEC subject to detect changes after proposal;
+- requires a fresh receipt identity rather than reusing the parent approval;
+- seals a child graph whose `parentDescriptorHash` points to the current parent;
+- records a material-revision amendment with the proposal hash, reason codes, prior hashes, prior approval scope, and new approval scope.
+
+Publishing the child still goes through `ExecutionRunStore.advanceGraph()`. Therefore any active lease on the parent graph blocks publication until the in-flight execution is reconciled and the lease is durably released.
+
+Installed projects expose the same boundary as:
+
+```text
+hybrid revision propose <run-id> <input.json> [project-root]
+hybrid revision apply   <run-id> <input.json> [project-root]
+```
+
+`revision apply` consumes an externally created user approval receipt; it does not create one.
+
 ## Operational rule
 
 The normal sequence is:
