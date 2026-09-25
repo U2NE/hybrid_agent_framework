@@ -160,6 +160,44 @@ test('pure preparation does zero provenance I/O and wired preparation persists a
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('approved wired preparation durably binds the sealed graph before execution', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'execution-graph-wired-'));
+  const runtimeRoot = path.join(root, 'runtime');
+  try {
+    const wired = await prepareExecutionWithProvenance({
+      runId: 'sealed-run',
+      request: 'Update src/a.js behavior',
+      task: { request: 'Update src/a.js behavior', files: ['src/a.js'] },
+      tasks: [{ id: 'A', owner: 'implementer', files_modified: ['src/a.js'], depends_on: [] }],
+      executionApproved: true,
+      approvalScopeHash: 'approval-scope',
+    }, { runtimeRoot, repoRoot: root });
+
+    assert.equal(wired.executionPersistence.initialized, true);
+    assert.equal(wired.executionPersistence.status, 'committed');
+    assert.equal(
+      wired.executionPersistence.descriptorHash,
+      wired.executionGraph.descriptorHash
+    );
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(root, '.planning/runs/sealed-run/GRAPH.json'), 'utf8')
+    );
+    assert.equal(persisted.descriptorHash, wired.executionGraph.descriptorHash);
+
+    const replay = await prepareExecutionWithProvenance({
+      runId: 'sealed-run',
+      request: 'Update src/a.js behavior',
+      task: { request: 'Update src/a.js behavior', files: ['src/a.js'] },
+      tasks: [{ id: 'A', owner: 'implementer', files_modified: ['src/a.js'], depends_on: [] }],
+      executionApproved: true,
+      approvalScopeHash: 'approval-scope',
+    }, { runtimeRoot, repoRoot: root });
+    assert.equal(replay.executionPersistence.status, 'replayed');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('wired preparation persistence failure is non-fatal and leaves prepared semantics intact', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'provenance-fail-'));
   const blocked = path.join(root, 'file');

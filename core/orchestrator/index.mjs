@@ -6,6 +6,7 @@ import { buildExecutionWaves, planExecutionIsolation, findFileConflicts } from '
 import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
 import { assessSecurityReview } from '../verification/index.mjs';
 import { sealExecutionPlan } from '../execution-graph/index.mjs';
+import { ExecutionRunStore } from '../transitions/index.mjs';
 
 const ROUTABLE_STAGES = new Set([
   'scout',
@@ -153,11 +154,28 @@ export function prepareExecution(input) {
 
 export async function prepareExecutionWithProvenance(input = {}, options = {}) {
   const runId = options.runId || input.runId || 'execution';
+  const projectRoot = options.repoRoot || input.repoRoot || '.';
   const prepared = prepareExecution({ ...input, runId });
+  let executionPersistence = {
+    initialized: false,
+    status: null,
+    path: null,
+    descriptorHash: null,
+  };
+  if (prepared.executionGraph) {
+    const runStore = options.runStore || new ExecutionRunStore(projectRoot, runId);
+    const persistedGraph = await runStore.initializeGraph(prepared.executionGraph);
+    executionPersistence = {
+      initialized: true,
+      status: persistedGraph.status,
+      path: persistedGraph.path,
+      descriptorHash: prepared.executionGraph.descriptorHash,
+    };
+  }
   const writer = options.decisionWriter || createDecisionWriter({
     role: 'lead',
     runId,
-    repoRoot: options.repoRoot || input.repoRoot || '.',
+    repoRoot: projectRoot,
     runtimeRoot: options.runtimeRoot,
     strict: options.strict === true,
   });
@@ -183,6 +201,7 @@ export async function prepareExecutionWithProvenance(input = {}, options = {}) {
       count,
       error,
     },
+    executionPersistence,
   };
 }
 
