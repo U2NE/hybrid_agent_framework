@@ -22,7 +22,7 @@ test('repository canonical STATE.md matches the current runtime validation bound
   assert.match(state.nextAction, /Case J\/K deterministic preflights/i);
   assert.match(state.nextAction, /204\/204 regression suite are complete/i);
   assert.deepEqual(state.blockers, [
-    'Authenticated Case J/K reruns are pending because Codex usage quota was exhausted; revised Case J reached installed automatic decision persistence before Implementer spawn, while Case K was blocked at turn start',
+    'Authenticated Case J/K semantic PASS remains pending because Codex usage quota was exhausted; revised Case J reached automatic persistence plus artifact-backed Implementer mutation and linked worker provenance but not lightweight verification/final audit, while Case K was blocked at turn start',
     'Real Case D has not been exercised because the harness must not invent user responses',
   ]);
 

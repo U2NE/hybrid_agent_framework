@@ -8,7 +8,7 @@ test('Case K parallel provenance deterministic preflight covers positive and neg
   assert.equal(result.case, 'K');
   assert.equal(result.runtimeExecuted, false);
   for (const name of [
-    'exitZeroNoDecisions', 'oneChildMissing', 'spawnWithoutDecision', 'orphanWorker', 'leadEdits',
+    'exitZeroNoDecisions', 'oneChildMissing', 'serializedDispatch', 'spawnWithoutDecision', 'orphanWorker', 'leadEdits',
     'crossWrite', 'workerCentralDecision', 'workerCentralAction', 'actorObserved',
     'auditMissing', 'auditFailed', 'installedApiMissing', 'frameworkBypass', 'installedCoreModified',
   ]) assert.ok(result.negativeCases.includes(name), name);

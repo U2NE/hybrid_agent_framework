@@ -43,6 +43,63 @@ function hasInstalledCoreBypass(text = '') {
   return sources.some(source => source.includes('/core/') && !source.includes('.hybrid/core/'));
 }
 
+function commandExecutions(stdout = '') {
+  const commands = new Set();
+  for (const line of String(stdout).split(/\r?\n/)) {
+    try {
+      const row = JSON.parse(line);
+      const item = row.item || {};
+      if (item.type === 'command_execution' && typeof item.command === 'string') commands.add(item.command);
+    } catch {}
+  }
+  return [...commands];
+}
+function hasLeadTargetMutation(stdout, targets = []) {
+  return commandExecutions(stdout).some(command => targets.some(target => {
+    for (const candidate of [target, './' + target]) {
+      const quoted = ["'" + candidate + "'", '"' + candidate + '"', '`' + candidate + '`'];
+      for (const q of quoted) {
+        if (command.includes('writeFile(' + q) ||
+            command.includes('writeFileSync(' + q) ||
+            command.includes('appendFile(' + q) ||
+            command.includes('appendFileSync(' + q) ||
+            command.includes('> ' + q) ||
+            command.includes('tee ' + q) ||
+            command.includes('open(' + q + ", 'w'") ||
+            command.includes('open(' + q + ', "w"')) return true;
+      }
+      if (command.includes('> ' + candidate) || command.includes('tee ' + candidate)) return true;
+    }
+    return (command.includes('sed -i') || command.includes('perl -pi')) && command.includes(target);
+  }));
+}
+function artifactBackedImplementerExecution({ decisions = [], events = [], actorArtifacts = [] } = {}) {
+  const spawn = decisions.find(d =>
+    d.decision === 'spawn_implementer' &&
+    d.files?.includes('README.md') &&
+    d.intendedAction?.role === 'implementer'
+  );
+  if (!spawn) return false;
+  const linked = events.filter(e => e.decisionId === spawn.decisionId);
+  const actor = actorArtifacts.find(a =>
+    a.decisionId === spawn.decisionId &&
+    a.taskId === spawn.taskId &&
+    a.agentRunId === spawn.agentRunId &&
+    a.attribution === 'reported' &&
+    a.files?.includes('README.md')
+  );
+  return Boolean(
+    actor &&
+    linked.some(e => e.action === 'spawn' && e.targetRole === 'implementer' && ['observed', 'derived'].includes(e.attribution)) &&
+    linked.some(e => e.action === 'complete' && e.targetRole === 'implementer' && ['observed', 'derived'].includes(e.attribution))
+  );
+}
+function usageLimitReason(run = {}) {
+  const text = String(run.stdout || '') + '\n' + String(run.stderr || '');
+  const match = text.match(/[^\n]*(?:usage limit|try again at)[^\n]*/i);
+  return match ? match[0].replace(/^.*?"message":"?/, '').replace(/["}]+$/, '') : null;
+}
+
 export function validateDecisionProvenanceEvidence(input = {}) {
   const { decisions = [], events = [], actorArtifacts = [] } = input;
   const errors = [];
@@ -100,7 +157,8 @@ export function validateDecisionProvenanceEvidence(input = {}) {
   if (events.some(e => e.action === 'file_mutation' && (e.actorRole || e.role) === 'lead' && e.files?.includes('README.md'))) errors.push('LEAD_IMPLEMENTATION_BYPASS');
   if (actorArtifacts.some(a => a.attribution !== 'reported')) errors.push('ACTOR_NOT_REPORTED');
   if (input.fixtureValid !== true) errors.push('FIXTURE_MISMATCH');
-  if (input.delegationCount != null && input.delegationCount < 1) errors.push('MISSING_ACTUAL_IMPLEMENTER_DELEGATION');
+  if (input.workerExecutionObserved !== true) errors.push('MISSING_ACTUAL_IMPLEMENTER_EXECUTION');
+  if (input.leadMutationObserved === true) errors.push('LEAD_IMPLEMENTATION_BYPASS');
   if (input.installedApiUsed === false) errors.push('INSTALLED_API_NOT_USED');
   if (input.frameworkSourceBypass === true) errors.push('FRAMEWORK_SOURCE_BYPASS');
   if (input.installedCoreChanged === true) errors.push('INSTALLED_CORE_CHANGED');
@@ -153,7 +211,7 @@ function synthetic() {
   const decisions = [classification, activation, wave, spawn, verify, completion];
   const audit = auditDecisionTrace({ decisions, events, actorArtifacts, taskOwnership: { [taskId]: ['README.md'] } });
   return {
-    decisions, events, actorArtifacts, audit, fixtureValid: true, delegationCount: 1,
+    decisions, events, actorArtifacts, audit, fixtureValid: true, workerExecutionObserved: true, leadMutationObserved: false,
     installedApiUsed: true, frameworkSourceBypass: false, installedCoreChanged: false,
   };
 }
@@ -202,7 +260,7 @@ export async function preflightDecisionProvenanceSmoke() {
       missingCompletion: { ...positive, events: positive.events.filter(e => e.action !== 'completion') },
       leadImplementationBypass: { ...positive, events: [...positive.events, { runId, decisionId: positive.decisions.find(d => d.decision === 'spawn_implementer').decisionId, action: 'file_mutation', actorRole: 'lead', role: 'lead', attribution: 'observed', files: ['README.md'] }] },
       actorObserved: { ...positive, actorArtifacts: positive.actorArtifacts.map(a => ({ ...a, attribution: 'observed' })) },
-      noDelegation: { ...positive, delegationCount: 0 },
+      noWorkerExecution: { ...positive, workerExecutionObserved: false },
       frameworkSourceBypass: { ...positive, frameworkSourceBypass: true },
       installedCoreChanged: { ...positive, installedCoreChanged: true },
     };
@@ -275,10 +333,9 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
 
   const prompt = [
     '$hybrid',
-    'You are the installed Hybrid Lead in ' + root + '.',
-    'Before changing files, read AGENTS.md and the installed .agents/skills/hybrid/SKILL.md, .agents/skills/execute/SKILL.md, and .agents/skills/review/SKILL.md contracts.',
-    'Perform this trivial Tier 0 task: change README.md from "# Case J" to "# Case J verified".',
-    'Use run id case-j. Completion must follow the installed Hybrid contract; if a required Implementer cannot be spawned, fail rather than substituting the Lead.',
+    'Use the installed Hybrid contract to perform this trivial Tier 0 task: change README.md from "# Case J" to "# Case J verified".',
+    'Use runtime run id case-j and follow the installed provenance contract.',
+    'If the required Implementer cannot be spawned, fail closed without editing README.md.',
     'Do not modify .hybrid/core. Do not commit.',
   ].join('\n');
 
@@ -296,16 +353,28 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
   const semantic = validateDecisionProvenanceEvidence({
     ...evidence,
     fixtureValid: await fs.readFile(path.join(root, 'README.md'), 'utf8') === final,
-    delegationCount: delegationCalls(run.stdout).length,
+    workerExecutionObserved: artifactBackedImplementerExecution(evidence),
+    leadMutationObserved: hasLeadTargetMutation(run.stdout, ['README.md']),
     installedApiUsed: runtimeSource.installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: runtimeSource.frameworkSourceBypass,
     installedCoreChanged: Boolean(changedCore.stdout.trim()),
   });
+  const usageLimit = usageLimitReason(run);
   if (run.code !== 0 || run.timedOut) semantic.errors.push('CODEX_FAILED');
   semantic.ok = !semantic.errors.length;
-  await fs.writeFile(path.join(root, '.planning/decision-runtime-report.json'), JSON.stringify({
-    semantic, delegationCount: delegationCalls(run.stdout).length, codexCode: run.code, timedOut: run.timedOut,
-  }, null, 2));
+  const report = {
+    semantic,
+    workerExecutionObserved: artifactBackedImplementerExecution(evidence),
+    nativeDelegationSignals: delegationCalls(run.stdout).length,
+    leadMutationObserved: hasLeadTargetMutation(run.stdout, ['README.md']),
+    codexCode: run.code,
+    timedOut: run.timedOut,
+    usageLimit,
+  };
+  await fs.writeFile(path.join(root, '.planning/decision-runtime-report.json'), JSON.stringify(report, null, 2));
+  if (usageLimit) {
+    return { status: 'runtime-validation-pending', case: 'J', workspace: root, reason: usageLimit, semantic };
+  }
   return { status: semantic.ok ? 'completed' : 'failed', case: 'J', workspace: root, semantic };
 }
 

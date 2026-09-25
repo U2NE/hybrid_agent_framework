@@ -40,6 +40,9 @@ export function validateParallelProvenanceEvidence(input = {}) {
   if (parent && children.some(d => d.waveId !== parent.waveId)) errors.push('WAVE_LINK_MISMATCH');
   if (new Set(children.map(d => d.taskId)).size !== 2) errors.push('TASK_ID_COLLISION');
   if (children.some(d => !d.agentRunId) || new Set(children.map(d => d.agentRunId)).size !== 2) errors.push('WORKER_IDENTITY_INVALID');
+  const actionEvents = events.filter(e => ['spawn', 'complete'].includes(e.action) && ['A', 'B'].includes(e.taskId));
+  const firstComplete = actionEvents.findIndex(e => e.action === 'complete');
+  if (firstComplete >= 0 && actionEvents.slice(0, firstComplete).filter(e => e.action === 'spawn').length !== 2) errors.push('PARALLEL_DISPATCH_NOT_OBSERVED');
   if (children.some(d => !['native-observed', 'framework-logical'].includes(d.facts?.agentIdentityKind))) errors.push('WORKER_IDENTITY_KIND_INVALID');
 
   if (actorArtifacts.some(a => !decisions.some(d => d.decisionId === a.decisionId) || !['A', 'B'].includes(a.taskId))) errors.push('ORPHAN_ACTOR_ARTIFACT');
@@ -113,6 +116,7 @@ export async function preflightParallelProvenanceSmoke() {
     const negatives = {
       exitZeroNoDecisions: { ...positive, decisions: [] },
       oneChildMissing: { ...positive, decisions: prepared.decisionTrace.filter(d => d.taskId !== 'B') },
+      serializedDispatch: { ...positive, events: [eventFor(childA, 'spawn'), eventFor(childA, 'complete'), eventFor(childB, 'spawn'), eventFor(childB, 'complete')] },
       spawnWithoutDecision: { ...positive, events: [...events, { ...events[0], decisionId: 'missing' }] },
       orphanWorker: { ...positive, actorArtifacts: [...actorArtifacts, { ...actorArtifacts[0], taskId: 'orphan', decisionId: 'missing', agentRunId: 'logical-orphan' }] },
       leadEdits: { ...positive, events: [...events, { ...events[0], action: 'file_mutation', taskId: 'A', actorRole: 'lead', role: 'lead' }] },
@@ -144,10 +148,9 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
   await exec('git', ['-c', 'user.name=Hybrid', '-c', 'user.email=hybrid@example.invalid', 'commit', '-qm', 'Case K baseline'], { cwd: root });
   const prompt = [
     '$hybrid',
-    'You are the installed Hybrid Lead in ' + root + '.',
-    'Before changing files, read AGENTS.md and the installed .agents/skills/hybrid/SKILL.md and .agents/skills/execute/SKILL.md contracts.',
-    'Execute the already-approved Hybrid plan in this repository using runtime run id case-k.',
-    'Complete the implementation and verification through the installed Hybrid contract. If either required Implementer cannot be spawned, fail closed without editing its owned file.',
+    'Execute the already-approved Hybrid plan in this repository.',
+    'Use the installed Hybrid framework and its installed contracts, including provenance. Use runtime run id case-k.',
+    'Complete implementation and verification. If either required Implementer cannot be spawned, fail closed without editing its owned file.',
     'Do not modify .hybrid core. Do not commit.',
   ].join('\n');
   const run = await runCodexExec(bin, ['exec', '--strict-config', '--json', '--sandbox', 'workspace-write', '--cd', root, prompt], {
@@ -169,7 +172,7 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     events,
     actorArtifacts,
     audit,
-    actualSiblingWorkersObserved: delegationCalls(run.stdout).length >= 2,
+    actualSiblingWorkersObserved: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }) && !hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
     fixtureValid:
       await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '') === 'A1\n' &&
       await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '') === 'B1\n',
@@ -177,9 +180,22 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     installedApiUsed: (await inspectRuntimeSource(root)).installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: (await inspectRuntimeSource(root)).frameworkSourceBypass,
   });
+  const usageLimit = usageLimitReason(run);
   if (run.code !== 0 || run.timedOut) semantic.errors.push('CODEX_FAILED');
   semantic.ok = !semantic.errors.length;
-  await fs.writeFile(path.join(root, '.planning/parallel-provenance-runtime-report.json'), JSON.stringify(semantic, null, 2) + '\n');
+  const report = {
+    semantic,
+    artifactBackedSiblingExecution: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }),
+    nativeDelegationSignals: delegationCalls(run.stdout).length,
+    leadMutationObserved: hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
+    codexCode: run.code,
+    timedOut: run.timedOut,
+    usageLimit,
+  };
+  await fs.writeFile(path.join(root, '.planning/parallel-provenance-runtime-report.json'), JSON.stringify(report, null, 2) + '\n');
+  if (usageLimit) {
+    return { status: 'runtime-validation-pending', case: 'K', workspace: root, reason: usageLimit, exitCode: run.code, semantic };
+  }
   return { status: semantic.ok ? 'completed' : 'failed', case: 'K', workspace: root, exitCode: run.code, semantic };
 }
 
@@ -224,6 +240,64 @@ function walkDelegation(value, calls) {
   const name = value.tool_name || value.toolName || value.tool || value.name;
   if (typeof name === 'string' && /(?:^|\.)spawn_agent$/i.test(name)) calls.push(value);
   for (const child of Object.values(value)) walkDelegation(child, calls);
+}
+function commandExecutions(stdout = '') {
+  const commands = new Set();
+  for (const line of String(stdout).split(/\r?\n/)) {
+    try {
+      const row = JSON.parse(line);
+      const item = row.item || {};
+      if (item.type === 'command_execution' && typeof item.command === 'string') commands.add(item.command);
+    } catch {}
+  }
+  return [...commands];
+}
+function hasLeadTargetMutation(stdout, targets = []) {
+  return commandExecutions(stdout).some(command => targets.some(target => {
+    for (const candidate of [target, './' + target]) {
+      const quoted = ["'" + candidate + "'", '"' + candidate + '"', '`' + candidate + '`'];
+      for (const q of quoted) {
+        if (command.includes('writeFile(' + q) ||
+            command.includes('writeFileSync(' + q) ||
+            command.includes('appendFile(' + q) ||
+            command.includes('appendFileSync(' + q) ||
+            command.includes('> ' + q) ||
+            command.includes('tee ' + q) ||
+            command.includes('open(' + q + ", 'w'") ||
+            command.includes('open(' + q + ', "w"')) return true;
+      }
+      if (command.includes('> ' + candidate) || command.includes('tee ' + candidate)) return true;
+    }
+    return (command.includes('sed -i') || command.includes('perl -pi')) && command.includes(target);
+  }));
+}
+function artifactBackedSiblingExecution({ decisions = [], events = [], actorArtifacts = [] } = {}) {
+  const children = decisions.filter(d =>
+    d.decision === 'spawn_implementer' &&
+    ['A', 'B'].includes(d.taskId) &&
+    d.intendedAction?.role === 'implementer'
+  );
+  if (children.length !== 2) return false;
+  return children.every(child => {
+    const linked = events.filter(e => e.decisionId === child.decisionId);
+    const actor = actorArtifacts.find(a =>
+      a.decisionId === child.decisionId &&
+      a.taskId === child.taskId &&
+      a.agentRunId === child.agentRunId &&
+      a.attribution === 'reported' &&
+      (a.files || []).every(file => ownership[child.taskId].files.includes(file))
+    );
+    return Boolean(
+      actor &&
+      linked.some(e => e.action === 'spawn' && e.targetRole === 'implementer' && ['observed', 'derived'].includes(e.attribution)) &&
+      linked.some(e => e.action === 'complete' && e.targetRole === 'implementer' && ['observed', 'derived'].includes(e.attribution))
+    );
+  });
+}
+function usageLimitReason(run = {}) {
+  const text = String(run.stdout || '') + '\n' + String(run.stderr || '');
+  const match = text.match(/[^\n]*(?:usage limit|try again at)[^\n]*/i);
+  return match ? match[0].replace(/^.*?"message":"?/, '').replace(/["}]+$/, '') : null;
 }
 async function inspectRuntimeSource(root) {
   const sources = await planningSources(root);
