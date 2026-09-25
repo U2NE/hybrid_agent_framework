@@ -11,6 +11,7 @@ import {
   createWorktreeWave,
   integrateWorktreeResults,
   listGitWorktrees,
+  readWorktreeOwner,
 } from '../../core/worktree/index.mjs';
 import { validateWorktreeSmokeReport } from '../../scripts/worktree-runtime-smoke.mjs';
 
@@ -43,24 +44,44 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
 
   const handle = await createWorktreeWave({
     repoRoot: root,
+    runId: 'run-1',
+    revisionId: 'graph-2',
+    graphHash: 'hash-abc',
     tasks: [
-      { id: 'a', files_modified: ['src/a.js'] },
-      { id: 'b', files_modified: ['src/b.js'] },
+      { id: 'a', agentRunId: 'agent-a', files_modified: ['src/a.js'] },
+      { id: 'b', agentRunId: 'agent-b', files_modified: ['src/b.js'] },
     ],
   });
 
   assert.equal(handle.worktrees.length, 2);
   assert.notEqual(handle.worktrees[0].path, handle.worktrees[1].path);
   assert.equal((await listGitWorktrees(root)).length, 3);
+  assert.deepEqual(await readWorktreeOwner(handle.worktrees[0].path), {
+    schema: 'hybrid-worktree-owner/v1',
+    runId: 'run-1',
+    revisionId: 'graph-2',
+    graphHash: 'hash-abc',
+    taskId: 'a',
+    agentRunId: 'agent-a',
+    baseCommit: handle.baseCommit,
+  });
 
   await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 1;\n');
   await fs.writeFile(path.join(handle.worktrees[1].path, 'src/b.js'), 'export const b = 2;\n');
 
   const collected = await collectWorktreeResults(handle);
   assert.deepEqual(collected.results.map((x) => x.changedFiles), [['src/a.js'], ['src/b.js']]);
+  assert.ok(collected.results.every((x) => /^[0-9a-f]{64}$/.test(x.patchHash)));
+  assert.ok(collected.results.every((x) => x.attribution === 'observed'));
+  assert.deepEqual(collected.results.map((x) => x.agentRunId), ['agent-a', 'agent-b']);
 
   const integrated = await integrateWorktreeResults(collected);
   assert.equal(integrated.integrated.length, 2);
+  assert.ok(integrated.integrated.every((x) => x.attribution === 'observed'));
+  assert.deepEqual(
+    integrated.integrated.map((x) => x.patchHash),
+    collected.results.map((x) => x.patchHash)
+  );
   assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 1;\n');
   assert.equal(await fs.readFile(path.join(root, 'src/b.js'), 'utf8'), 'export const b = 2;\n');
 
@@ -90,6 +111,43 @@ test('worktree bridge fails closed on ownership escape before integration', asyn
       (error) => error.code === 'WORKTREE_OWNERSHIP_VIOLATION'
     );
     assert.equal((await git(root, ['status', '--porcelain'])).stdout.trim(), '');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('worktree result collection rejects tampered execution ownership metadata', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-owner',
+    revisionId: 'revision-1',
+    graphHash: 'graph-hash',
+    tasks: [{ id: 'a', agentRunId: 'agent-a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    const worktreePath = handle.worktrees[0].path;
+    const metadataRaw = (await git(worktreePath, [
+      'rev-parse',
+      '--git-path',
+      'hybrid-worktree-owner.json',
+    ])).stdout.trim();
+    const metadataPath = path.isAbsolute(metadataRaw)
+      ? metadataRaw
+      : path.resolve(worktreePath, metadataRaw);
+    const owner = JSON.parse(await fs.readFile(metadataPath, 'utf8'));
+    owner.taskId = 'different-task';
+    await fs.writeFile(metadataPath, JSON.stringify(owner, null, 2) + '\n');
+    await fs.writeFile(path.join(worktreePath, 'src/a.js'), 'export const a = 1;\n');
+
+    await assert.rejects(
+      () => collectWorktreeResults(handle),
+      (error) => error.code === 'WORKTREE_OWNER_MISMATCH'
+    );
   } finally {
     await cleanupWorktreeWave(handle, { suppressErrors: true });
   }

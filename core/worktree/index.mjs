@@ -3,8 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
+const OWNER_FILENAME = 'hybrid-worktree-owner.json';
+const OWNER_SCHEMA = 'hybrid-worktree-owner/v1';
 
 export class WorktreeRuntimeError extends Error {
   constructor(message, code = 'WORKTREE_RUNTIME_ERROR', details = {}) {
@@ -20,6 +23,9 @@ export async function createWorktreeWave({
   tasks,
   baseRef = 'HEAD',
   tempRoot = null,
+  runId = null,
+  revisionId = null,
+  graphHash = null,
 }) {
   const normalizedRoot = path.resolve(String(repoRoot || ''));
   const normalizedTasks = normalizeTasks(tasks);
@@ -40,10 +46,19 @@ export async function createWorktreeWave({
     for (const task of normalizedTasks) {
       const worktreePath = path.join(root, safeName(task.id));
       await runGit(normalizedRoot, ['worktree', 'add', '--detach', worktreePath, baseCommit]);
+      const owner = await bindWorktreeOwner(worktreePath, {
+        runId,
+        revisionId,
+        graphHash,
+        taskId: task.id,
+        agentRunId: task.agentRunId || task.agent_run_id || null,
+        baseCommit,
+      });
       worktrees.push({
         task,
         taskId: task.id,
         path: worktreePath,
+        owner,
       });
     }
   } catch (error) {
@@ -63,6 +78,9 @@ export async function createWorktreeWave({
     root,
     initialWorktrees,
     worktrees,
+    runId,
+    revisionId,
+    graphHash,
   };
 }
 
@@ -71,6 +89,15 @@ export async function collectWorktreeResults(handle) {
   const results = [];
 
   for (const worktree of handle.worktrees) {
+    const observedOwner = await readWorktreeOwner(worktree.path);
+    if (!ownerMatches(worktree.owner, observedOwner)) {
+      throw new WorktreeRuntimeError(
+        'worktree ownership metadata does not match the execution handle for task ' + worktree.taskId,
+        'WORKTREE_OWNER_MISMATCH',
+        { taskId: worktree.taskId, expected: worktree.owner, observed: observedOwner }
+      );
+    }
+
     // Intent-to-add makes new files visible to git diff without staging content.
     await runGit(worktree.path, ['add', '-N', '.']);
     const changedFiles = lines((await runGit(worktree.path, ['diff', '--name-only', 'HEAD'])).stdout);
@@ -90,13 +117,19 @@ export async function collectWorktreeResults(handle) {
     const patch = (await runGit(worktree.path, ['diff', '--binary', '--full-index', 'HEAD'])).stdout;
     const patchPath = path.join(handle.root, '.hybrid-' + safeName(worktree.taskId) + '.patch');
     await fs.writeFile(patchPath, patch, 'utf8');
+    const patchHash = createHash('sha256').update(patch).digest('hex');
 
     results.push({
       taskId: worktree.taskId,
+      agentRunId: observedOwner.agentRunId,
       worktreePath: worktree.path,
+      baseCommit: handle.baseCommit,
       changedFiles,
       patchPath,
       patchBytes: Buffer.byteLength(patch),
+      patchHash,
+      attribution: 'observed',
+      owner: observedOwner,
     });
   }
 
@@ -137,8 +170,12 @@ export async function integrateWorktreeResults(handleWithResults) {
       await runGit(handleWithResults.repoRoot, ['apply', result.patchPath]);
       integrated.push({
         taskId: result.taskId,
+        agentRunId: result.agentRunId || null,
+        baseCommit: result.baseCommit || handleWithResults.baseCommit,
         changedFiles: result.changedFiles,
         patchBytes: result.patchBytes,
+        patchHash: result.patchHash,
+        attribution: 'observed',
       });
     }
   } catch (error) {
@@ -199,6 +236,48 @@ export async function cleanupWorktreeWave(handle, options = {}) {
   return { removed, remaining, errors };
 }
 
+export async function readWorktreeOwner(worktreePath) {
+  const metadataPath = await worktreeOwnerMetadataPath(worktreePath);
+  let raw;
+  try {
+    raw = await fs.readFile(metadataPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new WorktreeRuntimeError(
+        'worktree ownership metadata is missing',
+        'WORKTREE_OWNER_MISSING',
+        { worktreePath, metadataPath }
+      );
+    }
+    throw error;
+  }
+
+  let owner;
+  try {
+    owner = JSON.parse(raw);
+  } catch (error) {
+    throw new WorktreeRuntimeError(
+      'worktree ownership metadata is invalid JSON',
+      'WORKTREE_OWNER_CORRUPT',
+      { worktreePath, metadataPath }
+    );
+  }
+  if (
+    owner?.schema !== OWNER_SCHEMA ||
+    typeof owner.taskId !== 'string' ||
+    !owner.taskId ||
+    typeof owner.baseCommit !== 'string' ||
+    !owner.baseCommit
+  ) {
+    throw new WorktreeRuntimeError(
+      'worktree ownership metadata has an invalid schema',
+      'WORKTREE_OWNER_CORRUPT',
+      { worktreePath, metadataPath }
+    );
+  }
+  return owner;
+}
+
 export async function listGitWorktrees(repoRoot) {
   const output = (await runGit(repoRoot, ['worktree', 'list', '--porcelain'])).stdout;
   const entries = [];
@@ -230,6 +309,77 @@ export async function assertCleanRepository(repoRoot) {
     );
   }
   return true;
+}
+
+async function bindWorktreeOwner(worktreePath, input) {
+  const metadataPath = await worktreeOwnerMetadataPath(worktreePath);
+  const owner = {
+    schema: OWNER_SCHEMA,
+    runId: nullableString(input.runId),
+    revisionId: nullableString(input.revisionId),
+    graphHash: nullableString(input.graphHash),
+    taskId: String(input.taskId || ''),
+    agentRunId: nullableString(input.agentRunId),
+    baseCommit: String(input.baseCommit || ''),
+  };
+  if (!owner.taskId || !owner.baseCommit) {
+    throw new WorktreeRuntimeError(
+      'worktree owner requires taskId and baseCommit',
+      'WORKTREE_OWNER_INVALID',
+      { owner }
+    );
+  }
+
+  await fs.mkdir(path.dirname(metadataPath), { recursive: true });
+  try {
+    const handle = await fs.open(metadataPath, 'wx', 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(owner, null, 2) + '\n', 'utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    const existing = await readWorktreeOwner(worktreePath);
+    if (!ownerMatches(owner, existing)) {
+      throw new WorktreeRuntimeError(
+        'worktree already belongs to a different execution owner',
+        'WORKTREE_OWNER_CONFLICT',
+        { worktreePath, expected: owner, observed: existing }
+      );
+    }
+  }
+  return owner;
+}
+
+async function worktreeOwnerMetadataPath(worktreePath) {
+  const raw = (await runGit(worktreePath, ['rev-parse', '--git-path', OWNER_FILENAME])).stdout.trim();
+  if (!raw) {
+    throw new WorktreeRuntimeError(
+      'git did not return a worktree metadata path',
+      'WORKTREE_OWNER_PATH_MISSING',
+      { worktreePath }
+    );
+  }
+  return path.isAbsolute(raw) ? raw : path.resolve(worktreePath, raw);
+}
+
+function ownerMatches(expected, observed) {
+  if (!expected || !observed) return false;
+  return [
+    'schema',
+    'runId',
+    'revisionId',
+    'graphHash',
+    'taskId',
+    'agentRunId',
+    'baseCommit',
+  ].every((key) => (expected[key] ?? null) === (observed[key] ?? null));
+}
+
+function nullableString(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value);
 }
 
 async function rollbackIntegration(handle) {
