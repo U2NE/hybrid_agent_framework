@@ -37,6 +37,33 @@ test('Tier 1 bounded default avoids scout planner tester reviewer and knowledge 
   assert.equal(route(result, 'verifier').routeLevel, 'luna_medium');
 });
 
+test('execution graph is sealed only after explicit execution approval', () => {
+  const base = {
+    task: { request: 'Update parser behavior', files: ['src/parser.js'] },
+    request: 'Update parser behavior',
+    runId: 'run-approved',
+    tasks: [{ id: 'parser', depends_on: [], files_modified: ['src/parser.js'] }],
+  };
+
+  const pending = prepareExecution(base);
+  assert.equal(pending.executionGraph, null);
+
+  const approved = prepareExecution({
+    ...base,
+    executionApproved: true,
+    approvalScopeHash: 'approved-scope',
+  });
+  assert.equal(approved.executionGraph.schema, 'hybrid-exec-graph/v2');
+  assert.equal(approved.executionGraph.runId, 'run-approved');
+  assert.equal(approved.executionGraph.approvalScopeHash, 'approved-scope');
+  assert.ok(approved.executionGraph.descriptorHash);
+
+  assert.throws(
+    () => prepareExecution({ ...base, executionApproved: true }),
+    /approvalScopeHash or approvalScope is required/
+  );
+});
+
 test('Tier 1 conditionally adds planning, tester, and reviewer only when evidence requires them', () => {
   const result = prepareExecution({
     task: {

@@ -5,6 +5,7 @@ import { evaluateRequirements } from '../requirements/index.mjs';
 import { buildExecutionWaves, planExecutionIsolation, findFileConflicts } from '../scheduler/index.mjs';
 import { resolveRoleRouting, MODEL_ROUTING_POLICY } from '../routing/index.mjs';
 import { assessSecurityReview } from '../verification/index.mjs';
+import { sealExecutionPlan } from '../execution-graph/index.mjs';
 
 const ROUTABLE_STAGES = new Set([
   'scout',
@@ -112,6 +113,23 @@ export function prepareExecution(input) {
   const needs = derivePipelineNeeds(input, classification, securityReview, routingContext);
   const pipeline = derivePipeline({ classification, securityReview, needs });
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
+  const executionGraph =
+    input.executionApproved === true && Array.isArray(input.tasks) && input.tasks.length
+      ? sealExecutionPlan(
+          input.plan || { tasks: input.tasks },
+          {
+            runId: input.runId || 'execution',
+            revisionId: input.graphRevisionId || 'G1',
+            spec: input.spec ?? null,
+            specHash: input.specHash,
+            planHash: input.planHash,
+            approvalScopeHash: input.approvalScopeHash,
+            approvalScope: input.approvalScope,
+            concurrencyLimit: input.concurrencyLimit,
+            terminalVerificationNodeId: input.terminalVerificationNodeId,
+          }
+        )
+      : null;
 
   return {
     decisionTrace: executionDecisions(input, { classification, pipeline, isolationPlan, modelRouting, securityAssessment }),
@@ -124,6 +142,7 @@ export function prepareExecution(input) {
     isolationPlan,
     routingContext,
     modelRouting,
+    executionGraph,
     blocked:
       classification.tier === TaskTier.AMBIGUOUS &&
       requirements !== null &&

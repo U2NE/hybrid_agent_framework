@@ -1,5 +1,5 @@
 import { buildDecision } from '../provenance/index.mjs';
-import { buildExecutionWaves } from '../scheduler/index.mjs';
+import { buildExecutionWaves, normalizeTask } from '../scheduler/index.mjs';
 
 const PLAN_OPEN = '<!-- hybrid-plan:v1';
 const PLAN_CLOSE = '-->';
@@ -122,14 +122,32 @@ function normalizePlanTask(task, index) {
   const verify = normalizeTextAlias(task, 'verify', 'automated_verify', id);
   if (!verify) throw new PlanError('task ' + id + ' requires automated verify command');
 
-  return {
+  const contract = normalizeTask({
     id,
     goal,
     files_modified: files,
+    reads: task.reads || task.files_read || task.filesRead || [],
+    writes: task.writes || task.files_written || task.filesWritten || [],
+    resources: task.resources || [],
+    effect_policy: task.effect_policy || task.effectPolicy,
     depends_on: dependsOn,
     acceptance_criteria: acceptance,
     verify,
     owner: String(task.owner || 'implementer'),
+  });
+
+  return {
+    id,
+    goal,
+    files_modified: contract.files_modified,
+    reads: contract.reads,
+    writes: contract.writes,
+    resources: contract.resources,
+    effect_policy: contract.effect_policy,
+    depends_on: contract.depends_on,
+    acceptance_criteria: acceptance,
+    verify,
+    owner: contract.owner,
     security_relevant: task.security_relevant === true,
   };
 }
