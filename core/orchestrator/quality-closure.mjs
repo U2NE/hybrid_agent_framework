@@ -373,6 +373,7 @@ export async function runQualityClosure(options = {}) {
       taskId,
       stage,
       ...event,
+      primitive: 'runQualityClosure',
     };
     events.push(item);
     try {

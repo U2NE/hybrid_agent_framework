@@ -642,7 +642,7 @@ export async function runCodexExec(codexBin, args, options = {}) {
   });
 }
 
-async function runCodexDoctor(codexBin) {
+export async function runCodexDoctor(codexBin) {
   try {
     const { stdout } = await execFileAsync(codexBin, ['doctor', '--json'], { maxBuffer: 4 * 1024 * 1024 });
     return parseDoctor(stdout);
