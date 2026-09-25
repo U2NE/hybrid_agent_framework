@@ -54,6 +54,14 @@ Failure routing is stage-local. A verifier failure does not raise the code revie
 
 The legacy `verificationFailures` counter remains supported for compatibility, but now walks the same ladder one rung per failure and applies only to the verifier or implementation-owner repair path. It no longer jumps directly from Luna high to Luna max or forces Sol merely because the bounded repair loop reached its final attempt.
 
+## Run-level Sol budget
+
+Routing selection and execution authorization are separate. Selecting a Sol route does not itself authorize a Sol subprocess. Before each Sol stage-attempt, the Lead must reserve and then verify the exact route through `core/routing/budget.mjs`.
+
+The default automatic cap is **3 unique Sol stage-attempt reservations per run**. Exact replay of the same attempt is idempotent; a different route for the same stage/attempt is fenced. Concurrent reservation attempts share a durable lock and cannot oversubscribe the cap.
+
+When the cap is exhausted, execution fails closed with `MODEL_BUDGET_USER_APPROVAL_REQUIRED`. Raising the cap requires a user-attributed approval receipt; Lead/worker agents may consume such a receipt but may not self-issue one. See `docs/architecture/MODEL-BUDGET.md`.
+
 ## Runtime application
 
 Standalone role TOMLs contain no static `model` or `model_reasoning_effort`. The lead applies the route per spawn.

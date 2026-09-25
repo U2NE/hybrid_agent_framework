@@ -86,6 +86,8 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
     { cwd: target }
   );
   assert.match(installedHelp.stdout, /hybrid lease acquire/);
+  assert.match(installedHelp.stdout, /hybrid model-budget reserve/);
+  assert.match(installedHelp.stdout, /hybrid model-budget verify/);
 
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);
@@ -109,6 +111,16 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   const installedAgents = await fs.readFile(path.join(target, 'AGENTS.md'), 'utf8');
   assert.match(installedAgents, /User approval is an authority boundary/);
   assert.match(installedAgents, /MUST NOT self-issue a receipt/);
+  assert.match(installedAgents, /per-run durable model budget/);
+  assert.match(installedAgents, /default automatic cap is 3 unique Sol stage-attempts per run/);
+  assert.match(installedAgents, /MUST NOT self-issue or fabricate a model-budget approval receipt/);
+
+  const modelBudgetCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'routing', 'budget.mjs'),
+    'utf8'
+  );
+  assert.match(modelBudgetCore, /export class ModelBudgetStore/);
+  assert.match(modelBudgetCore, /MODEL_BUDGET_USER_APPROVAL_REQUIRED/);
 
   const routingPolicy = JSON.parse(
     await fs.readFile(path.join(target, '.hybrid', 'core', 'routing', 'model-routing.json'), 'utf8')
@@ -116,6 +128,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.equal(routingPolicy.default_model_tier, 'luna');
   assert.equal(routingPolicy.heavy_model_tier, 'sol');
   assert.equal(routingPolicy.fallback, 'fail-closed');
+  assert.equal(routingPolicy.budget_policy.default_max_sol_reservations_per_run, 3);
 });
 
 test('Codex CLI presence adds config validation while missing auth remains runtime pending', async () => {

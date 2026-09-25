@@ -67,6 +67,20 @@ export function resolveRoleRouting(role, options = {}) {
     throw routingError('MODEL_REQUIRED', 'Resolved Hybrid route has no explicit model', { role, routeLevel });
   }
   validateModelSelection(attemptedModel, configuredEffort, policy);
+  const attemptedFamily = modelFamilyFor(attemptedModel, policy);
+  if (attemptedFamily !== level.family) {
+    throw routingError(
+      'MODEL_FAMILY_MISMATCH',
+      'Model override family does not match the selected Hybrid route family',
+      {
+        role,
+        routeLevel,
+        routeFamily: level.family,
+        model: attemptedModel,
+        modelFamily: attemptedFamily,
+      }
+    );
+  }
 
   if (options.modelOverrideSupported === false) {
     throw routingError('MODEL_OVERRIDE_REJECTED', 'Codex model override is unavailable; session inheritance is prohibited', {
@@ -398,6 +412,15 @@ export function sanitizeModel(value) {
     throw new Error('Refusing non-OpenAI-looking Codex model override: ' + model);
   }
   return model;
+}
+
+function modelFamilyFor(model, policy) {
+  const families = new Set(
+    Object.values(policy.levels || {})
+      .filter((level) => level?.model === model)
+      .map((level) => level.family)
+  );
+  return families.size === 1 ? [...families][0] : null;
 }
 
 function routingError(code, message, details = {}) {

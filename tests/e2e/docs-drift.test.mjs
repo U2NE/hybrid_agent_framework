@@ -34,12 +34,15 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   const plan = await fs.readFile(path.join(root, 'skills/plan/SKILL.md'), 'utf8');
   const runtimeReadme = await fs.readFile(path.join(root, 'runtime-smoke/README.md'), 'utf8');
   const runtimeDoc = await fs.readFile(path.join(root, 'docs/architecture/RUNTIME-SMOKE.md'), 'utf8');
+  const routingDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-ROUTING.md'), 'utf8');
+  const budgetDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-BUDGET.md'), 'utf8');
 
   assert.equal(policy.default_route, 'luna_medium');
   assert.equal(policy.profiles.moderate, 'luna_high');
   assert.equal(policy.profiles.hard, 'luna_xhigh');
   assert.equal(policy.profiles.very_hard, 'luna_max');
   assert.equal(policy.profiles.exceptional, 'sol_high');
+  assert.equal(policy.budget_policy.default_max_sol_reservations_per_run, 3);
 
   assert.match(plan, /raises Luna reasoning effort first/i);
   assert.match(plan, /Sol is reserved for exceptional or unresolved reasoning/i);
@@ -52,6 +55,9 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.doesNotMatch(runtimeReadme, /Code Reviewer: Sol for the security-sensitive review/i);
 
   assert.match(runtimeDoc, /bounded security reviewer uses Luna max/i);
+  assert.match(routingDoc, /default automatic cap is \*\*3 unique Sol stage-attempt reservations per run\*\*/i);
+  assert.match(routingDoc, /MODEL_BUDGET_USER_APPROVAL_REQUIRED/);
+  assert.match(budgetDoc, /Lead\/worker agents must not self-issue it/i);
 
   for (const alias of ['.agents/skills/plan/SKILL.md', '.codex/skills/plan/SKILL.md']) {
     const stat = await fs.lstat(path.join(root, alias));

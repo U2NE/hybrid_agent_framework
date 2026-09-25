@@ -211,6 +211,22 @@ test('routing allowlist is canonical and unavailable overrides fail closed witho
     error => error?.code === 'EFFORT_NOT_ALLOWED'
   );
   assert.throws(
+    () => resolveRoleRouting('implementer', {
+      routeLevel: 'luna_max',
+      roleModels: { implementer: 'gpt-6-sol' },
+      roleEffort: { implementer: 'max' },
+    }),
+    error => error?.code === 'MODEL_FAMILY_MISMATCH'
+  );
+  assert.throws(
+    () => resolveRoleRouting('architect', {
+      routeLevel: 'sol_high',
+      roleModels: { architect: 'gpt-6-luna' },
+      roleEffort: { architect: 'high' },
+    }),
+    error => error?.code === 'MODEL_FAMILY_MISMATCH'
+  );
+  assert.throws(
     () => resolveRoleRouting('planner', { roleModels: { planner: 'gpt-6-astra' } }),
     error => error?.code === 'MODEL_NOT_ALLOWED'
   );

@@ -8,6 +8,7 @@ import { prepareExecution } from '../core/orchestrator/index.mjs';
 import { StateStore } from '../core/state/index.mjs';
 import { ExecutionRunStore } from '../core/transitions/index.mjs';
 import { ResourceLeaseStore } from '../core/leases/index.mjs';
+import { ModelBudgetStore } from '../core/routing/budget.mjs';
 import { ingestWiki, lintWiki, queryWiki } from '../core/wiki/index.mjs';
 
 const [command, ...args] = process.argv.slice(2);
@@ -74,6 +75,51 @@ try {
       } else {
         throw new Error(
           'usage: hybrid lease <acquire|release|list|verify> <run-id> ...'
+        );
+      }
+      break;
+    }
+
+    case 'model-budget': {
+      const sub = args[0];
+      const runId = required(args[1], 'run id');
+
+      if (sub === 'reserve') {
+        const stageId = required(args[2], 'stage id');
+        const attemptId = required(args[3], 'attempt id');
+        const routePath = required(args[4], 'route JSON path');
+        const root = path.resolve(args[5] || '.');
+        const route = await readJsonFile(routePath);
+        print(await new ModelBudgetStore(root, runId).reserve(
+          route,
+          stageId,
+          attemptId
+        ));
+      } else if (sub === 'verify') {
+        const stageId = required(args[2], 'stage id');
+        const attemptId = required(args[3], 'attempt id');
+        const routePath = required(args[4], 'route JSON path');
+        const authorizationPath = required(args[5], 'authorization JSON path');
+        const root = path.resolve(args[6] || '.');
+        const route = await readJsonFile(routePath);
+        const authorization = await readJsonFile(authorizationPath);
+        print(await new ModelBudgetStore(root, runId).verify(
+          route,
+          stageId,
+          attemptId,
+          authorization
+        ));
+      } else if (sub === 'approve') {
+        const receiptPath = required(args[2], 'user approval receipt JSON path');
+        const root = path.resolve(args[3] || '.');
+        const receipt = await readJsonFile(receiptPath);
+        print(await new ModelBudgetStore(root, runId).approveLimit(receipt));
+      } else if (sub === 'list') {
+        const root = path.resolve(args[2] || '.');
+        print(await new ModelBudgetStore(root, runId).list());
+      } else {
+        throw new Error(
+          'usage: hybrid model-budget <reserve|verify|approve|list> <run-id> ...'
         );
       }
       break;
@@ -153,6 +199,10 @@ function help() {
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',
     '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
     '  hybrid lease list <run-id> [project-root]',
+    '  hybrid model-budget reserve <run-id> <stage-id> <attempt-id> <route.json> [project-root]',
+    '  hybrid model-budget verify <run-id> <stage-id> <attempt-id> <route.json> <authorization.json> [project-root]',
+    '  hybrid model-budget approve <run-id> <user-approval-receipt.json> [project-root]',
+    '  hybrid model-budget list <run-id> [project-root]',
     '  hybrid state init [project-root]',
     '  hybrid state get [project-root]',
     '  hybrid wiki lint [wiki-root]',

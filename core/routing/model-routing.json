@@ -84,5 +84,8 @@
     "luna_max_failure": "sol_high",
     "stage_local": true,
     "bounded_retry_limit": 3
+  },
+  "budget_policy": {
+    "default_max_sol_reservations_per_run": 3
   }
 }
