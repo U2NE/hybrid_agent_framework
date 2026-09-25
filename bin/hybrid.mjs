@@ -9,6 +9,11 @@ import { StateStore } from '../core/state/index.mjs';
 import { ExecutionRunStore } from '../core/transitions/index.mjs';
 import { ResourceLeaseStore } from '../core/leases/index.mjs';
 import {
+  beginCurrentWorkspaceGuard,
+  completeCurrentWorkspaceGuard,
+  inspectCurrentWorkspaceGuard,
+} from '../core/workspace-guard/index.mjs';
+import {
   proposeMaterialRevision,
   sealApprovedMaterialRevision,
 } from '../core/execution-graph/index.mjs';
@@ -79,6 +84,42 @@ try {
       } else {
         throw new Error(
           'usage: hybrid lease <acquire|release|list|verify> <run-id> ...'
+        );
+      }
+      break;
+    }
+
+    case 'workspace-guard': {
+      const sub = args[0];
+
+      if (sub === 'status') {
+        const root = path.resolve(args[1] || '.');
+        print(await inspectCurrentWorkspaceGuard(root));
+        break;
+      }
+
+      const runId = required(args[1], 'run id');
+      const authorizationPath = required(args[2], 'dispatch authorization JSON path');
+      const root = path.resolve(args[3] || '.');
+      const runStore = new ExecutionRunStore(root, runId);
+      const graph = await runStore.loadGraph();
+      const authorization = await readJsonFile(authorizationPath);
+
+      if (sub === 'begin') {
+        print(await beginCurrentWorkspaceGuard({
+          projectRoot: root,
+          graph,
+          authorization,
+        }));
+      } else if (sub === 'complete') {
+        print(await completeCurrentWorkspaceGuard({
+          projectRoot: root,
+          graph,
+          authorization,
+        }));
+      } else {
+        throw new Error(
+          'usage: hybrid workspace-guard <begin|complete> <run-id> <authorization.json> [project-root] | workspace-guard status [project-root]'
         );
       }
       break;
@@ -252,6 +293,9 @@ function help() {
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',
     '  hybrid lease release <run-id> <lease-id> <lease-token> [project-root]',
     '  hybrid lease list <run-id> [project-root]',
+    '  hybrid workspace-guard begin <run-id> <authorization.json> [project-root]',
+    '  hybrid workspace-guard complete <run-id> <authorization.json> [project-root]',
+    '  hybrid workspace-guard status [project-root]',
     '  hybrid revision propose <run-id> <input.json> [project-root]',
     '  hybrid revision apply <run-id> <input.json> [project-root]',
     '  hybrid model-budget reserve <run-id> <stage-id> <attempt-id> <route.json> [project-root]',

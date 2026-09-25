@@ -68,3 +68,27 @@ test('routing documentation stays semantically aligned with canonical Luna-first
     );
   }
 });
+
+test('current-workspace mutation guard documentation matches the enforced ownership boundary', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const guardDoc = await fs.readFile(
+    path.join(root, 'docs/architecture/WORKSPACE-MUTATION-GUARD.md'),
+    'utf8'
+  );
+  const executeSkill = await fs.readFile(
+    path.join(root, 'skills/execute/SKILL.md'),
+    'utf8'
+  );
+  const guardCore = await fs.readFile(
+    path.join(root, 'core/workspace-guard/index.mjs'),
+    'utf8'
+  );
+
+  assert.match(guardDoc, /observed_changed_paths ⊆ sealed_task_writes/);
+  assert.match(guardDoc, /WRITE_SET_VIOLATION/);
+  assert.match(guardDoc, /WORKSPACE_BASE_MOVED/);
+  assert.match(guardDoc, /repository-global/i);
+  assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
+  assert.match(executeSkill, /current-workspace mutation guard/);
+  assert.match(guardCore, /WORKSPACE_GUARD_RECONCILIATION_REQUIRED/);
+});

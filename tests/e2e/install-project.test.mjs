@@ -80,6 +80,16 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(agents, /deterministic durable integration queue/);
   assert.match(agents, /task-ID deterministic/);
 
+  const workspaceGuardCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'workspace-guard', 'index.mjs'),
+    'utf8'
+  );
+  assert.match(workspaceGuardCore, /WRITE_SET_VIOLATION/);
+  assert.match(workspaceGuardCore, /beginCurrentWorkspaceGuard/);
+  assert.match(agents, /hybrid workspace-guard begin/);
+  assert.match(agents, /hybrid workspace-guard complete/);
+  assert.match(agents, /MUST NOT auto-expand the task write set/);
+
   const installedHelp = await execFileAsync(
     process.execPath,
     [path.join(target, '.hybrid', 'bin', 'hybrid.mjs'), 'help'],
@@ -90,9 +100,16 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(installedHelp.stdout, /hybrid model-budget verify/);
   assert.match(installedHelp.stdout, /hybrid revision propose/);
   assert.match(installedHelp.stdout, /hybrid revision apply/);
+  assert.match(installedHelp.stdout, /hybrid workspace-guard begin/);
+  assert.match(installedHelp.stdout, /hybrid workspace-guard complete/);
 
   const skill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: hybrid\ndescription: .+\n---/m);
+  assert.match(skill, /repository-global workspace mutation guard/);
+  assert.match(skill, /WRITE_SET_VIOLATION/);
+  const executeSkill = await fs.readFile(path.join(target, '.agents', 'skills', 'execute', 'SKILL.md'), 'utf8');
+  assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
+  assert.match(executeSkill, /current-workspace mutation guard/);
   await assert.rejects(fs.access(path.join(target, '.codex', 'skills', 'hybrid', 'SKILL.md')));
 
   const role = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-scout.toml'), 'utf8');

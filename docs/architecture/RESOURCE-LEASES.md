@@ -69,4 +69,4 @@ node .hybrid/bin/hybrid.mjs lease list <run-id> [project-root]
 node .hybrid/bin/hybrid.mjs lease release <run-id> <lease-id> <lease-token> [project-root]
 ```
 
-A mutating Hybrid worker is not authorized to start without a current active dispatch authorization for its sealed task attempt.
+A mutating Hybrid worker is not authorized to start without a current active dispatch authorization for its sealed task attempt. When that task is scheduled in the shared current workspace rather than a detached worktree, the same authorization must also open the repository-global current-workspace mutation guard before spawn; guard completion must succeed before task completion is accepted and the lease is released. See `WORKSPACE-MUTATION-GUARD.md`.
