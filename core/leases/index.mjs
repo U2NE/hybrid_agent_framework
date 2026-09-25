@@ -198,6 +198,23 @@ export class ResourceLeaseStore {
     };
   }
 
+  async withGraphRevisionFence(fn) {
+    if (typeof fn !== 'function') {
+      throw new TypeError('graph revision fence callback is required');
+    }
+    return this.#withStoreLock(async () => {
+      const store = await this.#loadUnlocked();
+      const activeLeases = store.leases
+        .filter((lease) => lease.status === 'active')
+        .map(publicLease)
+        .sort((a, b) => a.leaseId.localeCompare(b.leaseId));
+      return fn({
+        activeLeases,
+        leaseStorePath: this.storePath,
+      });
+    });
+  }
+
   async assertAuthorization(graph, authorization) {
     validateGraphForStore(graph, this.runId);
     validateDispatchAuthorizationShape(authorization);

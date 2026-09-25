@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateSealedExecutionGraph } from '../execution-graph/index.mjs';
+import { ResourceLeaseStore } from '../leases/index.mjs';
 
 export const TRANSITION_SCHEMA = 'hybrid-transition/v1';
 
@@ -66,25 +67,45 @@ export class ExecutionRunStore {
       );
     }
 
-    const current = await this.loadGraph();
-    if (current.descriptorHash === graph.descriptorHash) {
-      return { status: 'replayed', graph: current, path: this.graphPath };
-    }
-    if (graph.parentDescriptorHash !== current.descriptorHash) {
-      throw new TransitionError(
-        'graph revision does not extend the current descriptor',
-        'GRAPH_FENCED',
-        {
-          currentDescriptorHash: current.descriptorHash,
-          parentDescriptorHash: graph.parentDescriptorHash,
-          attemptedDescriptorHash: graph.descriptorHash,
-        }
-      );
-    }
+    const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+    return leaseStore.withGraphRevisionFence(async ({ activeLeases, leaseStorePath }) => {
+      const current = await this.loadGraph();
+      if (current.descriptorHash === graph.descriptorHash) {
+        return { status: 'replayed', graph: current, path: this.graphPath };
+      }
+      if (activeLeases.length) {
+        throw new TransitionError(
+          'graph revision cannot advance while task leases are active',
+          'GRAPH_ADVANCE_ACTIVE_LEASES',
+          {
+            currentDescriptorHash: current.descriptorHash,
+            attemptedDescriptorHash: graph.descriptorHash,
+            activeLeases: activeLeases.map((lease) => ({
+              leaseId: lease.leaseId,
+              taskId: lease.taskId,
+              attemptId: lease.attemptId,
+              descriptorHash: lease.descriptorHash,
+            })),
+            leaseStorePath,
+          }
+        );
+      }
+      if (graph.parentDescriptorHash !== current.descriptorHash) {
+        throw new TransitionError(
+          'graph revision does not extend the current descriptor',
+          'GRAPH_FENCED',
+          {
+            currentDescriptorHash: current.descriptorHash,
+            parentDescriptorHash: graph.parentDescriptorHash,
+            attemptedDescriptorHash: graph.descriptorHash,
+          }
+        );
+      }
 
-    await this.#persistGraphRevision(graph);
-    await atomicJsonWrite(this.graphPath, graph);
-    return { status: 'advanced', graph, path: this.graphPath };
+      await this.#persistGraphRevision(graph);
+      await atomicJsonWrite(this.graphPath, graph);
+      return { status: 'advanced', graph, path: this.graphPath };
+    });
   }
 
   async loadGraphRevision(descriptorHash) {

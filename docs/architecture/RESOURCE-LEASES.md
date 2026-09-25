@@ -44,6 +44,14 @@ If another active lease conflicts by file read/write access or semantic resource
 
 Two separate runtime processes can therefore race to acquire the same resource and exactly one may win. Disjoint task/resource contracts may acquire concurrently.
 
+## Graph revision fence
+
+A graph revision changes the descriptor hash that every dispatch authorization is bound to. Therefore `ExecutionRunStore.advanceGraph()` and lease acquisition share the same durable `.leases.lock` boundary.
+
+Inside that lock, graph advancement re-reads the current graph and active lease set. Replaying the exact current descriptor is allowed, but a real child revision is rejected with `GRAPH_ADVANCE_ACTIVE_LEASES` while any task lease is active. After every active lease has been durably released/reconciled, the child graph may advance.
+
+This is intentionally stronger than a separate “check then write”: holding the same lock across active-lease inspection and graph persistence removes the acquire-vs-revision TOCTOU window.
+
 ## Release and recovery
 
 Release requires the lease token and is fingerprinted by its result. Replaying the same release is idempotent. Releasing the same lease with a contradictory result is fenced.

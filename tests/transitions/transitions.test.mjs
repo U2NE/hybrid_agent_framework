@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { requestLeaseExtension } from '../../core/execution-graph/index.mjs';
 import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
+import { ResourceLeaseStore } from '../../core/leases/index.mjs';
 import {
   ExecutionRunStore,
   TransitionError,
@@ -76,6 +77,49 @@ test('graph advancement requires the current descriptor as parent and retains re
   await assert.rejects(
     () => store.advanceGraph(sibling),
     (error) => error instanceof TransitionError && error.code === 'GRAPH_FENCED'
+  );
+});
+
+test('graph advancement is fenced by active dispatch leases and succeeds after release', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const runStore = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await runStore.initializeGraph(graph);
+
+  const amendedResult = requestLeaseExtension(graph, {
+    taskId: 'task-a',
+    resources: ['contract:expanded'],
+  });
+  assert.equal(amendedResult.applied, true);
+
+  const acquired = await leaseStore.acquire(graph, 'task-a', 'attempt-active');
+  await assert.rejects(
+    () => runStore.advanceGraph(amendedResult.graph),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'GRAPH_ADVANCE_ACTIVE_LEASES' &&
+      error.details.activeLeases.some((lease) =>
+        lease.taskId === 'task-a' &&
+        lease.attemptId === 'attempt-active' &&
+        lease.descriptorHash === graph.descriptorHash
+      )
+  );
+
+  assert.equal((await runStore.loadGraph()).descriptorHash, graph.descriptorHash);
+  const replay = await runStore.advanceGraph(graph);
+  assert.equal(replay.status, 'replayed');
+
+  await leaseStore.release(
+    acquired.authorization.leaseId,
+    acquired.authorization.leaseToken,
+    { outcome: 'aborted-before-revision' }
+  );
+  const advanced = await runStore.advanceGraph(amendedResult.graph);
+  assert.equal(advanced.status, 'advanced');
+  assert.equal(
+    (await runStore.loadGraph()).descriptorHash,
+    amendedResult.graph.descriptorHash
   );
 });
 

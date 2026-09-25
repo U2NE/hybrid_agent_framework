@@ -67,7 +67,9 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
     'utf8'
   );
   assert.match(leaseCore, /export class ResourceLeaseStore/);
+  assert.match(leaseCore, /withGraphRevisionFence/);
   assert.match(agents, /active dispatch authorization/);
+  assert.match(agents, /graph advancement and acquisition share the lease-store revision fence/);
 
   const worktreeCore = await fs.readFile(
     path.join(target, '.hybrid', 'core', 'worktree', 'index.mjs'),

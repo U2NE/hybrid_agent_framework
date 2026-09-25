@@ -69,6 +69,49 @@ test('exact acquire replays the same durable lease and authorization', async () 
   assert.equal(stat.mode & 0o777, 0o600);
 });
 
+test('graph revision fence serializes against concurrent lease acquisition', async () => {
+  const root = await tempProject();
+  const graph = graphFor([{
+    id: 'A',
+    owner: 'implementer',
+    depends_on: [],
+    files_modified: ['src/a.js'],
+  }]);
+  const store = new ResourceLeaseStore(root, graph.runId);
+
+  let enterFence;
+  const entered = new Promise((resolve) => {
+    enterFence = resolve;
+  });
+  let releaseFence;
+  const gate = new Promise((resolve) => {
+    releaseFence = resolve;
+  });
+
+  const fence = store.withGraphRevisionFence(async ({ activeLeases }) => {
+    assert.deepEqual(activeLeases, []);
+    enterFence();
+    await gate;
+    return 'advanced';
+  });
+
+  await entered;
+  let acquired = false;
+  const acquisition = store.acquire(graph, 'A', 'attempt-after-fence').then((value) => {
+    acquired = true;
+    return value;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  assert.equal(acquired, false);
+
+  releaseFence();
+  assert.equal(await fence, 'advanced');
+  const result = await acquisition;
+  assert.equal(result.status, 'acquired');
+  assert.equal(acquired, true);
+});
+
 test('active writer lease blocks overlapping writer and reader leases', async () => {
   const root = await tempProject();
   const graph = graphFor([
