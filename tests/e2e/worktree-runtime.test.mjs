@@ -5,12 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 import {
   cleanupWorktreeWave,
   collectWorktreeResults,
   createWorktreeWave,
   integrateWorktreeResults,
   listGitWorktrees,
+  readIntegrationJournal,
   readWorktreeOwner,
 } from '../../core/worktree/index.mjs';
 import { validateWorktreeSmokeReport } from '../../scripts/worktree-runtime-smoke.mjs';
@@ -75,13 +77,27 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
   assert.ok(collected.results.every((x) => x.attribution === 'observed'));
   assert.deepEqual(collected.results.map((x) => x.agentRunId), ['agent-a', 'agent-b']);
 
-  const integrated = await integrateWorktreeResults(collected);
+  const completionOrderIndependent = {
+    ...collected,
+    results: [...collected.results].reverse(),
+  };
+  const integrated = await integrateWorktreeResults(completionOrderIndependent);
   assert.equal(integrated.integrated.length, 2);
   assert.ok(integrated.integrated.every((x) => x.attribution === 'observed'));
+  assert.deepEqual(integrated.integrated.map((x) => x.taskId), ['a', 'b']);
   assert.deepEqual(
     integrated.integrated.map((x) => x.patchHash),
     collected.results.map((x) => x.patchHash)
   );
+  assert.equal(integrated.integrationQueue.status, 'completed');
+  assert.equal(integrated.integrationQueue.disposition, 'committed');
+  assert.deepEqual(integrated.integrationQueue.orderedTaskIds, ['a', 'b']);
+  assert.match(integrated.integrationQueue.queueId, /^[0-9a-f]{64}$/);
+  assert.match(integrated.integrationQueue.finalWorkspaceHash, /^[0-9a-f]{64}$/);
+
+  const replay = await integrateWorktreeResults(completionOrderIndependent);
+  assert.equal(replay.integrationQueue.disposition, 'replayed');
+  assert.deepEqual(replay.integrated, integrated.integrated);
   assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 1;\n');
   assert.equal(await fs.readFile(path.join(root, 'src/b.js'), 'utf8'), 'export const b = 2;\n');
 
@@ -91,6 +107,197 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
 
   const status = (await git(root, ['status', '--short'])).stdout.trimEnd().split(/\r?\n/).sort();
   assert.deepEqual(status, [' M src/a.js', ' M src/b.js']);
+});
+
+test('concurrent integration callers serialize on one durable queue and replay the loser', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-concurrent',
+    tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 7;\n');
+    const collected = await collectWorktreeResults(handle);
+    const [left, right] = await Promise.all([
+      integrateWorktreeResults(collected),
+      integrateWorktreeResults(collected),
+    ]);
+
+    assert.deepEqual(
+      [left.integrationQueue.disposition, right.integrationQueue.disposition].sort(),
+      ['committed', 'replayed']
+    );
+    assert.equal(left.integrationQueue.queueId, right.integrationQueue.queueId);
+    assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 7;\n');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('integration restart reconciles a patch applied after write-ahead journal but before completion checkpoint', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-crash-window',
+    revisionId: 'G1',
+    graphHash: 'graph-crash-window',
+    tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 9;\n');
+    const collected = await collectWorktreeResults(handle);
+    const first = await integrateWorktreeResults(collected);
+    const journal = await readIntegrationJournal(root, first.integrationQueue.queueId);
+
+    const simulatedCrash = {
+      ...journal,
+      status: 'applying',
+      nextIndex: 0,
+      currentTaskId: 'a',
+      preWorkspaceHash: createHash('sha256')
+        .update('{"trackedDiff":"","untracked":[]}')
+        .digest('hex'),
+      applied: [],
+      finalWorkspaceHash: null,
+    };
+    await fs.writeFile(
+      first.integrationQueue.journalPath,
+      JSON.stringify(simulatedCrash, null, 2) + '\n',
+      'utf8'
+    );
+
+    const recovered = await integrateWorktreeResults(collected);
+    assert.equal(recovered.integrationQueue.disposition, 'replayed');
+    assert.equal(recovered.integrationQueue.status, 'completed');
+    assert.equal(recovered.integrated.length, 1);
+    assert.equal(recovered.integrated[0].taskId, 'a');
+    assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 9;\n');
+
+    const recoveredJournal = await readIntegrationJournal(root, recovered.integrationQueue.queueId);
+    assert.equal(recoveredJournal.status, 'completed');
+    assert.equal(recoveredJournal.applied.length, 1);
+    assert.equal(recoveredJournal.nextIndex, 1);
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('integration snapshot hash includes newly added untracked files', async () => {
+  const root = await fixture({
+    'src/existing.js': 'export const existing = true;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-new-file',
+    tasks: [{ id: 'new-file', files_modified: ['src/new.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/new.js'), 'export const added = 1;\n');
+    const collected = await collectWorktreeResults(handle);
+    const integrated = await integrateWorktreeResults(collected);
+    const emptyHash = createHash('sha256')
+      .update('{\"trackedDiff\":\"\",\"untracked\":[]}')
+      .digest('hex');
+
+    assert.notEqual(integrated.integrationQueue.finalWorkspaceHash, emptyHash);
+    assert.equal(await fs.readFile(path.join(root, 'src/new.js'), 'utf8'), 'export const added = 1;\n');
+    const replay = await integrateWorktreeResults(collected);
+    assert.equal(replay.integrationQueue.disposition, 'replayed');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('integration rejects a corrupted applied journal record on restart', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-corrupt-journal',
+    tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 3;\n');
+    const collected = await collectWorktreeResults(handle);
+    const integrated = await integrateWorktreeResults(collected);
+    const journal = await readIntegrationJournal(root, integrated.integrationQueue.queueId);
+    journal.applied[0].patchHash = '0'.repeat(64);
+    await fs.writeFile(
+      integrated.integrationQueue.journalPath,
+      JSON.stringify(journal, null, 2) + '\n',
+      'utf8'
+    );
+
+    await assert.rejects(
+      () => integrateWorktreeResults(collected),
+      (error) => error.code === 'WORKTREE_INTEGRATION_JOURNAL_CORRUPT'
+    );
+    assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 3;\n');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('completed integration preserves unexplained workspace drift and requires reconciliation', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+    'src/other.js': 'export const other = 0;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: 'run-drift',
+    tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 4;\n');
+    const collected = await collectWorktreeResults(handle);
+    await integrateWorktreeResults(collected);
+    await fs.writeFile(path.join(root, 'src/other.js'), 'export const other = 99;\n');
+
+    await assert.rejects(
+      () => integrateWorktreeResults(collected),
+      (error) => error.code === 'WORKTREE_INTEGRATION_RECONCILE_REQUIRED'
+    );
+    assert.equal(await fs.readFile(path.join(root, 'src/a.js'), 'utf8'), 'export const a = 4;\n');
+    assert.equal(await fs.readFile(path.join(root, 'src/other.js'), 'utf8'), 'export const other = 99;\n');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+});
+
+test('integration refuses a patch handoff modified after result collection', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+  });
+
+  try {
+    await fs.writeFile(path.join(handle.worktrees[0].path, 'src/a.js'), 'export const a = 1;\n');
+    const collected = await collectWorktreeResults(handle);
+    await fs.appendFile(collected.results[0].patchPath, '\n# tampered\n', 'utf8');
+
+    await assert.rejects(
+      () => integrateWorktreeResults(collected),
+      (error) => error.code === 'WORKTREE_PATCH_TAMPERED'
+    );
+    assert.equal((await git(root, ['status', '--porcelain'])).stdout.trim(), '');
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
 });
 
 test('worktree bridge fails closed on ownership escape before integration', async () => {

@@ -69,6 +69,15 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(leaseCore, /export class ResourceLeaseStore/);
   assert.match(agents, /active dispatch authorization/);
 
+  const worktreeCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'worktree', 'index.mjs'),
+    'utf8'
+  );
+  assert.match(worktreeCore, /hybrid-worktree-integration\/v1/);
+  assert.match(worktreeCore, /readIntegrationJournal/);
+  assert.match(agents, /deterministic durable integration queue/);
+  assert.match(agents, /task-ID deterministic/);
+
   const installedHelp = await execFileAsync(
     process.execPath,
     [path.join(target, '.hybrid', 'bin', 'hybrid.mjs'), 'help'],
