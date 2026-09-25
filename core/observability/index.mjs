@@ -14,7 +14,9 @@ export function sanitizeRuntimeEvent(event = {}) {
   };
 }
 
-export async function appendRuntimeEvent(input = {}, options = {}) {
+const CENTRAL_CONTROL_FIELDS = Object.freeze(['decisionId', 'action', 'actorRole', 'targetRole']);
+
+async function appendRuntimeEventInternal(input = {}, options = {}) {
   const repoRoot = input.repoRoot || options.repoRoot || '.';
   const runtimeRoot = options.runtimeRoot ||
     resolveHybridRuntimeRoot(repoRoot, options);
@@ -37,6 +39,14 @@ export async function appendRuntimeEvent(input = {}, options = {}) {
   }
 }
 
+export async function appendRuntimeEvent(input = {}, options = {}) {
+  const event = input.event || input;
+  if (CENTRAL_CONTROL_FIELDS.some((key) => event?.[key] != null)) {
+    throw new TypeError('central action events require createOrchestrationEventWriter');
+  }
+  return appendRuntimeEventInternal(input, options);
+}
+
 export function sanitizeStructuredMetadata(value) {
   if (Array.isArray(value)) return value.map(sanitizeStructuredMetadata);
   if (!value || typeof value !== 'object') return value;
@@ -53,6 +63,12 @@ export function sanitizeStructuredMetadata(value) {
   return out;
 }
 
+function containsProhibitedMetadata(value) {
+  if (Array.isArray(value)) return value.some(containsProhibitedMetadata);
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value).some(([key, child]) => OMIT_KEY.test(key) || containsProhibitedMetadata(child));
+}
+
 function safeSegment(value) {
   return String(value || 'run')
     .replace(/[^A-Za-z0-9._-]+/g, '-')
@@ -67,7 +83,7 @@ export function createOrchestrationEventWriter(options = {}) {
     if ((event.actorRole || event.role || 'lead') !== 'lead' ||
         (event.role && event.role !== 'lead') ||
         (event.runId && event.runId !== options.runId)) throw new TypeError('invalid central event actor');
-    if (JSON.stringify(event) !== JSON.stringify(sanitizeStructuredMetadata(event))) throw new TypeError('unsafe event metadata');
-    return appendRuntimeEvent({ runId: options.runId, event: { ...event, runId: options.runId, actorRole: 'lead', role: 'lead' } }, options);
+    if (containsProhibitedMetadata(event)) throw new TypeError('unsafe event metadata');
+    return appendRuntimeEventInternal({ runId: options.runId, event: { ...event, runId: options.runId, actorRole: 'lead', role: 'lead' } }, options);
   };
 }

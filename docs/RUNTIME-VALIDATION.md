@@ -168,11 +168,19 @@ Case I attests the installed Hybrid contract → installed production primitive 
 
 ### Case J — installed Decision Provenance
 
-Authenticated live semantic validation PASSes in a disposable project installed by the real installer. The real installed Lead produced `decisions.jsonl`, `events.jsonl`, and `audit.json` with `audit.ok === true`, recorded Tier 0 classification and `lead_direct_execution` / `TIER0_TRIVIAL`, linked the actual README mutation to the matching decision ID, and recorded lightweight verification plus completion evidence. An exit-zero process or final response alone is not a pass.
+The tightened Case J contract now requires the normal Tier 0 path to persist preparation automatically and delegate task-owned mutation to an actual Implementer. Semantic PASS requires Tier 0 classification, Implementer activation, a `spawn_implementer` decision linked to observed/derived Lead-owned spawn and completion events, one reported worker actor artifact, lightweight verification, final completion provenance, and `audit.json` with `audit.ok === true`. A contradictory `lead_direct_execution` record or Lead-owned task mutation is a failure.
 
-The deterministic validator rejects missing decision/action artifacts, unmatched decision IDs, recorded prompt/hidden-reasoning/raw-source data, fabricated actor attribution, and a completion claim without a runtime completion event. Parallel correctness is covered by deterministic fixtures: sibling completion order may vary; missing expected dispatches, orphan actions, role/file ownership violations, stale snapshots, and unverified attribution are findings. Audit findings are bounded diagnostics and do not fail normal execution.
+The revised deterministic preflight PASSes and rejects exit-zero without decisions, missing/orphaned actions, decision-ID mismatch, Lead implementation bypass, missing worker artifact, worker self-report upgraded to observed, missing/failed audit, missing completion, missing actual delegation, framework-source bypass, installed-core mutation, and prohibited prompt/hidden-reasoning/raw-source capture.
+
+Authenticated revised Case J reruns were attempted on 2026-09-25. With the `$hybrid` front door active, the installed Lead read the contracts and successfully invoked `prepareExecutionWithProvenance()`, automatically persisting the Tier 0 preparation trace including Implementer activation and `spawn_implementer`; Codex then exhausted its usage quota before the Implementer could actually spawn. Therefore the previous authenticated Case J PASS is historical evidence for the earlier Lead-direct contract only, while the new live run provides partial evidence for automatic normal-path preparation persistence but not authenticated Implementer execution. Revised Case J live PASS remains pending.
 
 The four record types remain distinct: Runtime Event = what happened; Decision Provenance = why Hybrid selected that control-flow action; Actor Artifact = what a specific worker did; Audit = whether the recorded decisions and actions agree. None records hidden chain-of-thought. Writer isolation is enforced by API shape: workers receive a writer bound to their own actor artifact, not the central decision writer. This does not claim an OS sandbox against a hostile process. The audit evaluates declared events, ownership, attribution, and evidence linkage; it cannot detect a filesystem mutation that was never reported through the runtime boundary.
+
+### Case K — parallel installed Decision Provenance
+
+Case K adds a disposable installed project with an already-approved two-task plan: task A owns `src/a.txt`, task B owns `src/b.txt`, both are independent and therefore one parallel wave. Deterministic preflight PASS requires one `parallel_wave` parent, two distinct `spawn_implementer` children with the same `waveId` and correct `parentDecisionId`, distinct worker identities, Lead-owned linked spawn/completion events, reported per-worker actor artifacts, exact file ownership, installed API use, installed-core integrity, and a clean audit. Negative fixtures cover a missing child, spawn without decision, Lead mutation bypass, cross-write, worker central writes, fabricated observed attribution, missing/failed audit, installed-API bypass, framework-source bypass, and installed-core mutation.
+
+The authenticated Case K live harness is implemented but not currently PASS-evidenced: the same Codex usage limit blocks authenticated execution. Live status remains pending until a real rerun completes.
 
 ## Still intentionally pending
 
@@ -194,6 +202,8 @@ A real live Case D is intentionally not auto-simulated because its core evidence
 The following are not claimed:
 
 - independent serving-model identity attestation beyond accepted model/effort requests;
+- revised authenticated Case J PASS under the tightened Implementer-owned Tier 0 contract until the usage-limited rerun succeeds;
+- authenticated Case K parallel provenance PASS until the usage-limited rerun succeeds;
 - real user-interactive Case D.
 
 ## Installer boundary

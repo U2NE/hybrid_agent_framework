@@ -6,15 +6,16 @@
   "schemaVersion": 1,
   "phase": "04-hardening",
   "status": "verified-interactive-runtime-pending",
-  "nextAction": "exercise Case D with genuine user answers; Decision Provenance, concurrency-safe Lead-owned decision/event logging, isolated worker actor artifacts, deterministic decision/action audit, and authenticated installed Case J semantic validation are complete, alongside Case I installed Lead runtime attestation and snapshot-bound runtime evidence hardening, generic runQualityClosure runtime enforcement, exact evidence reassessment, all-AC snapshot-bound independent verification, reusable context cache wiring, passive observability wiring, authenticated Cases G/H/I, retained A/B/C routing E/F evidence, and the full regression suite are complete",
+  "nextAction": "rerun authenticated Cases J/K after Codex usage quota resets and exercise Case D with genuine user answers; tightened Decision Provenance wiring, Tier 0 Implementer ownership, Lead-only central action persistence, automatic preparation/quality-closure persistence, Case J/K deterministic preflights, and the 204/204 regression suite are complete",
   "blockers": [
+    "Authenticated Case J/K reruns are pending because Codex usage quota was exhausted; revised Case J reached installed automatic decision persistence before Implementer spawn, while Case K was blocked at turn start",
     "Real Case D has not been exercised because the harness must not invent user responses"
   ],
   "activeSpec": ".planning/phases/04-hardening/SPEC.md",
   "activePlan": ".planning/phases/04-hardening/PLAN.md",
   "clarification": null,
-  "revision": 15,
-  "updatedAt": "2026-09-25T08:02:15Z"
+  "revision": 17,
+  "updatedAt": "2026-09-25T08:44:30Z"
 }
 -->
 
@@ -23,8 +24,8 @@
 - Schema: hybrid-state/v1
 - Phase: 04-hardening
 - Status: verified-interactive-runtime-pending
-- Next action: exercise Case D with genuine user answers; Decision Provenance, concurrency-safe Lead-owned decision/event logging, isolated worker actor artifacts, deterministic decision/action audit, and authenticated installed Case J semantic validation are complete, alongside Case I installed Lead runtime attestation and snapshot-bound runtime evidence hardening, generic runQualityClosure runtime enforcement, exact evidence reassessment, all-AC snapshot-bound independent verification, reusable context cache wiring, passive observability wiring, authenticated Cases G/H/I, retained A/B/C routing E/F evidence, and the full regression suite are complete
-- Revision: 15
-- Updated: 2026-09-25T08:02:15Z
+- Next action: rerun authenticated Cases J/K after Codex usage quota resets and exercise Case D with genuine user answers; tightened Decision Provenance wiring, Tier 0 Implementer ownership, Lead-only central action persistence, automatic preparation/quality-closure persistence, Case J/K deterministic preflights, and the 204/204 regression suite are complete
+- Revision: 17
+- Updated: 2026-09-25T08:44:30Z
 
 This file is canonical project state. Do not silently reconstruct or reset it if the machine-readable block is corrupt or uses an unsupported schema.

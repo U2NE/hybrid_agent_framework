@@ -1,6 +1,6 @@
-import { buildDecision } from '../provenance/index.mjs';
+import { buildDecision, createDecisionWriter } from '../provenance/index.mjs';
 import { buildWorkerContextWithCache } from '../context/index.mjs';
-import { appendRuntimeEvent } from '../observability/index.mjs';
+import { createOrchestrationEventWriter } from '../observability/index.mjs';
 import { acquireProofGaps, mergeAcquiredEvidence } from '../qe/index.mjs';
 import { runRepairConvergence, shouldTriggerRepair } from '../repair/index.mjs';
 import {
@@ -18,7 +18,21 @@ export async function runQualityClosure(options = {}) {
   const repoRoot = options.repoRoot || options.context?.repoRoot || '.';
   const runId = options.runId || 'quality-closure';
   const taskId = options.taskId || task.id || null;
-  const logger = options.appendRuntimeEvent || appendRuntimeEvent;
+  const runtimeRoot = options.runtimeRoot || options.context?.runtimeRoot;
+  const decisionWriter = options.decisionWriter || options.provenanceLogger || createDecisionWriter({
+    role: 'lead',
+    runId,
+    repoRoot,
+    runtimeRoot,
+    strict: options.strict === true,
+  });
+  const logger = options.appendRuntimeEvent || createOrchestrationEventWriter({
+    role: 'lead',
+    runId,
+    repoRoot,
+    runtimeRoot,
+    strict: options.strict === true,
+  });
   const events = [];
   const decisionTrace = [];
   const actionDecisions = new Map();
@@ -381,7 +395,7 @@ export async function runQualityClosure(options = {}) {
     const record = buildDecision({ runId, taskId, stage, policy: { rule }, reasonCodes, discriminator: String(decisionTrace.length), ...data });
     decisionTrace.push(record);
     if (record.intendedAction) actionDecisions.set(record.intendedAction.type, record);
-    try { await (options.decisionWriter || options.provenanceLogger)?.(record); } catch (error) { if (options.strict === true) throw error; }
+    try { await decisionWriter(record); } catch (error) { if (options.strict === true) throw error; }
     return record;
   }
 

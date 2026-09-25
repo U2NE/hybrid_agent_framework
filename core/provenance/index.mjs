@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { sanitizeStructuredMetadata } from '../observability/index.mjs';
+import { createOrchestrationEventWriter, sanitizeStructuredMetadata } from '../observability/index.mjs';
 import { resolveHybridRuntimeRoot } from '../runtime/index.mjs';
 
 export const DECISION_STAGES = Object.freeze(['classification', 'planning', 'scheduling', 'dispatch', 'routing', 'review', 'repair', 'proof', 'completion']);
@@ -93,6 +93,19 @@ export async function writeAuditArtifact(audit, options = {}) {
   catch (error) { if (options.strict) throw error; return { ok: false, error: String(error.message) }; }
 }
 
+export function createLeadProvenanceSession(options = {}) {
+  if (options.role && options.role !== 'lead') throw new TypeError('lead provenance session requires lead role');
+  const base = { ...options, role: 'lead' };
+  const writeDecision = createDecisionWriter(base);
+  const writeAction = createOrchestrationEventWriter(base);
+  return Object.freeze({
+    writeDecision,
+    writeAction,
+    writeAudit: audit => writeAuditArtifact(audit, base),
+    createActorWriter: agentRunId => createActorArtifactWriter({ ...base, agentRunId }),
+  });
+}
+
 export function auditDecisionTrace({ decisions = [], events = [], actorArtifacts = [], expectedSnapshot, taskOwnership = {} } = {}) {
   const findings = [];
   const add = (code, item = {}) => findings.push({ code, decisionId: item.decisionId ?? null, taskId: item.taskId ?? null });
@@ -131,6 +144,7 @@ export function auditDecisionTrace({ decisions = [], events = [], actorArtifacts
     if (a.attribution !== 'reported') add('UNVERIFIED_ATTRIBUTION', a);
     if (canonical(a) !== canonical(sanitizeStructuredMetadata(a))) add('DECISION_ACTION_MISMATCH', a);
     const d = byId.get(a.decisionId);
+    if (!d) { add('MISSING_DECISION', a); continue; }
     const owner = taskOwnership[a.taskId] || {};
     const files = owner.files_modified || owner.files || d?.files;
     if (files && (a.files || []).some(file => !files.includes(file))) add('FILE_OWNERSHIP_MISMATCH', a);

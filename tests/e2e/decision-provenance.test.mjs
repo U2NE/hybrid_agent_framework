@@ -4,8 +4,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildDecision, validateDecision, createDecisionWriter, createActorArtifactWriter, writeAuditArtifact, auditDecisionTrace } from '../../core/provenance/index.mjs';
-import { sanitizeStructuredMetadata, createOrchestrationEventWriter } from '../../core/observability/index.mjs';
-import { prepareExecution, runQualityClosure } from '../../core/orchestrator/index.mjs';
+import { appendRuntimeEvent, sanitizeStructuredMetadata, createOrchestrationEventWriter } from '../../core/observability/index.mjs';
+import { prepareExecution, prepareExecutionWithProvenance, runQualityClosure } from '../../core/orchestrator/index.mjs';
 import { assessSecurityReview, requiresSecurityReview } from '../../core/verification/index.mjs';
 import { buildPlanningDecision } from '../../core/planning/index.mjs';
 const decision = (extra = {}) => buildDecision({ runId: 'r', stage: 'dispatch', taskId: 'A', waveId: 'w', agentRunId: 'a', decision: 'dispatch', snapshot: 's', intendedAction: { type: 'dispatch', role: 'implementer' }, files: ['a.js'], ...extra });
@@ -58,7 +58,7 @@ test('planner/implementer bypass, cross-write, stale snapshot and attribution', 
   for (const [patch, code] of [[{ files: ['b.js'] }, 'FILE_OWNERSHIP_MISMATCH'], [{ snapshot: 'old' }, 'STALE_SNAPSHOT_ACTION'], [{ attribution: 'reported' }, 'UNVERIFIED_ATTRIBUTION'], [{ sourceAttribution: 'reported' }, 'UNVERIFIED_ATTRIBUTION']]) assert.ok(codes(auditDecisionTrace({ decisions: [d], events: [{ ...action(d), ...patch }] })).includes(code));
   assert.ok(codes(auditDecisionTrace({ decisions: [d], events: [action(d)], actorArtifacts: [{ decisionId: d.decisionId, agentRunId: 'a', action: 'dispatch', attribution: 'reported' }] })).includes('UNVERIFIED_ATTRIBUTION'));
 });
-test('Tier0 direct is accepted and planner-only revision helper is pure', () => {
+test('explicit lead-owned administrative decision remains representable and planner-only revision helper is pure', () => {
   const d = decision({ agentRunId: undefined, decision: 'lead_direct_execution', intendedAction: { type: 'file_mutation', role: 'lead' }, reasonCodes: ['TIER0_TRIVIAL'] });
   assert.equal(auditDecisionTrace({ decisions: [d], events: [action(d)] }).ok, true);
   const plan = buildPlanningDecision({ verdict: 'ITERATE', revision: 2 });
@@ -70,6 +70,8 @@ test('prepareExecution records existing isolation/routing/security without modif
   const fast = prepareExecution({ request: 'Fix README.md typo' });
   assert.deepEqual(fast.pipeline, ['implementer', 'lightweight-verify']);
   assert.ok(fast.decisionTrace.some(d => d.reasonCodes?.includes('TIER0_TRIVIAL')));
+  assert.ok(fast.decisionTrace.some(d => d.facts?.targetRole === 'implementer' && d.decision === 'activate'));
+  assert.ok(!fast.decisionTrace.some(d => d.decision === 'lead_direct_execution'));
   const input = { request: 'Add authentication', lunaExhausted: true, tasks: [{ id: 'A', files_modified: ['a.js'], codegen: true }, { id: 'B', files_modified: ['b.js'] }] };
   for (const worktreeAvailable of [true, false]) {
     const result = prepareExecution({ ...input, worktreeAvailable });
@@ -88,6 +90,83 @@ test('prepareExecution records existing isolation/routing/security without modif
   for (const description of ['authentication', 'authorization', 'file upload', 'trust boundary']) assert.equal(assessSecurityReview({ description }).required, true);
   assert.equal(requiresSecurityReview({ description: 'document token vocabulary', files: ['docs/token.md'] }), false);
 });
+test('pure preparation does zero provenance I/O and wired preparation persists automatically', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'provenance-wired-'));
+  const runtimeRoot = path.join(root, 'runtime');
+  try {
+    const input = {
+      runId: 'wired',
+      request: 'Fix README.md typo',
+      task: { id: 'A', request: 'Fix README.md typo', files: ['README.md'], acceptanceCriteria: ['wording corrected'] },
+      tasks: [{ id: 'A', owner: 'implementer', files_modified: ['README.md'], depends_on: [], agentRunId: 'logical-A', agentIdentityKind: 'framework-logical' }],
+    };
+    const pure = prepareExecution(input);
+    assert.equal(await fs.access(runtimeRoot).then(() => true, () => false), false);
+    assert.ok(!pure.decisionTrace.some(d => d.decision === 'lead_direct_execution'));
+    const wired = await prepareExecutionWithProvenance(input, { runtimeRoot, repoRoot: root });
+    assert.deepEqual(wired.pipeline, ['implementer', 'lightweight-verify']);
+    assert.equal(wired.provenance.persisted, true);
+    assert.equal(wired.provenance.count, wired.decisionTrace.length);
+    const saved = (await fs.readFile(path.join(runtimeRoot, 'runs/wired/decisions.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(saved.map(d => d.decisionId), wired.decisionTrace.map(d => d.decisionId));
+    const spawn = saved.find(d => d.decision === 'spawn_implementer' && d.taskId === 'A');
+    assert.ok(spawn);
+    assert.equal(spawn.parentDecisionId, saved.find(d => d.decision === 'schedule_wave').decisionId);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('wired preparation persistence failure is non-fatal and leaves prepared semantics intact', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'provenance-fail-'));
+  const blocked = path.join(root, 'file');
+  await fs.writeFile(blocked, 'x');
+  try {
+    const input = { runId: 'fail', request: 'Fix README.md typo' };
+    const pure = prepareExecution(input);
+    const wired = await prepareExecutionWithProvenance(input, { runtimeRoot: blocked });
+    assert.deepEqual(wired.classification, pure.classification);
+    assert.deepEqual(wired.pipeline, pure.pipeline);
+    assert.deepEqual(wired.decisionTrace, pure.decisionTrace);
+    assert.equal(wired.provenance.persisted, false);
+    assert.ok(wired.provenance.error);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('public passive event append cannot bypass Lead-owned central action writer', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'central-event-'));
+  try {
+    assert.equal((await appendRuntimeEvent({ runId: 'r', event: { stage: 'cache', outcome: 'hit' } }, { runtimeRoot: root })).ok, true);
+    await assert.rejects(appendRuntimeEvent({ runId: 'r', event: { decisionId: 'd', action: 'spawn', actorRole: 'lead' } }, { runtimeRoot: root }), /central action events/);
+    const writer = createOrchestrationEventWriter({ role: 'lead', runId: 'r', runtimeRoot: root });
+    assert.equal((await writer({ decisionId: 'd', action: 'spawn', targetRole: 'implementer', attribution: 'observed', nested: { apiKey: 'secret' } })).ok, true);
+    const rows = (await fs.readFile(path.join(root, 'runs/r/events.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[1].actorRole, 'lead');
+    assert.equal(rows[1].nested.apiKey, '[REDACTED]');
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('quality closure default path persists decisions and linked action events without injection', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'quality-default-provenance-'));
+  try {
+    const result = await runQualityClosure({
+      runId: 'q',
+      runtimeRoot: root,
+      tier: 0,
+      snapshot: 's',
+      qa: async () => ({ ok: true }),
+      verifier: async () => ({ ok: true, report: { criteria: [] } }),
+    });
+    const decisions = (await fs.readFile(path.join(root, 'runs/q/decisions.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    const events = (await fs.readFile(path.join(root, 'runs/q/events.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.ok(decisions.some(d => d.decision === 'repair_skip'));
+    const completion = events.find(e => e.stage === 'completion' && e.action === 'completion');
+    assert.ok(completion);
+    assert.ok(decisions.some(d => d.decisionId === completion.decisionId && d.stage === 'completion'));
+    assert.equal(completion.actorRole, 'lead');
+    assert.ok(result.events.some(e => e.stage === 'completion'));
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('quality closure links completion and keeps logging optional/nonfatal', async () => {
   const records = [];
   const result = await runQualityClosure({ tier: 0, snapshot: 's', qa: async () => ({ ok: true }), verifier: async () => ({ ok: true, report: { criteria: [] } }), appendRuntimeEvent: async () => { throw Error('offline'); }, decisionWriter: async d => { records.push(d); throw Error('offline'); } });

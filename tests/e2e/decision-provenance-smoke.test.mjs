@@ -5,6 +5,6 @@ test('Case J installs real contract and rejects all semantic negatives without a
   const result = await preflightDecisionProvenanceSmoke();
   assert.equal(result.status, 'preflight-passed');
   assert.equal(result.runtimeExecuted, false);
-  assert.equal(result.negativeCases.length, 11);
+  for (const name of ['leadImplementationBypass', 'actorObserved', 'noDelegation', 'frameworkSourceBypass', 'installedCoreChanged']) assert.ok(result.negativeCases.includes(name), name);
   assert.equal(validateDecisionProvenanceEvidence({ exitCode: 0 }).ok, false);
 });

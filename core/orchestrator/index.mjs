@@ -1,4 +1,4 @@
-import { buildDecision } from '../provenance/index.mjs';
+import { buildDecision, createDecisionWriter } from '../provenance/index.mjs';
 export { runQualityClosure } from './quality-closure.mjs';
 import { classifyTask, TaskTier } from '../classifier/index.mjs';
 import { evaluateRequirements } from '../requirements/index.mjs';
@@ -128,6 +128,42 @@ export function prepareExecution(input) {
       classification.tier === TaskTier.AMBIGUOUS &&
       requirements !== null &&
       requirements.pass === false,
+  };
+}
+
+
+export async function prepareExecutionWithProvenance(input = {}, options = {}) {
+  const runId = options.runId || input.runId || 'execution';
+  const prepared = prepareExecution({ ...input, runId });
+  const writer = options.decisionWriter || createDecisionWriter({
+    role: 'lead',
+    runId,
+    repoRoot: options.repoRoot || input.repoRoot || '.',
+    runtimeRoot: options.runtimeRoot,
+    strict: options.strict === true,
+  });
+  let count = 0;
+  let error = null;
+  for (const record of prepared.decisionTrace) {
+    try {
+      const result = await writer(record);
+      if (result?.ok === false) {
+        error ||= result.error || 'decision persistence failed';
+      } else {
+        count += 1;
+      }
+    } catch (cause) {
+      if (options.strict === true) throw cause;
+      error ||= String(cause?.message || cause);
+    }
+  }
+  return {
+    ...prepared,
+    provenance: {
+      persisted: count === prepared.decisionTrace.length,
+      count,
+      error,
+    },
   };
 }
 
@@ -279,7 +315,6 @@ function executionDecisions(input, prepared) {
   const { classification, pipeline, isolationPlan, modelRouting, securityAssessment } = prepared;
   const tierCode = ['TIER0_TRIVIAL', 'TIER1_BOUNDED', 'TIER2_COMPLEX', 'TIER3_AMBIGUOUS'][classification.tier];
   const root = add({ stage: 'classification', decision: 'classify_tier_' + classification.tier, policy: { rule: 'classification.tier' }, facts: { tier: classification.tier, evidence: classification.evidence }, reasonCodes: [tierCode] });
-  if (classification.tier === 0) add({ stage: 'dispatch', decision: 'lead_direct_execution', parentDecisionId: root.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: [tierCode], intendedAction: { type: 'lead-direct', role: 'lead', expectsEvent: false } });
   for (const role of ['planner', 'scout', 'researcher', 'implementer', 'tester', 'code-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
     const stage = ['planner', 'architect', 'plan-auditor'].includes(role) ? 'planning' : ['tester', 'code-reviewer', 'security-reviewer', 'verifier'].includes(role) ? 'review' : 'dispatch';
     add({ stage, discriminator: role, decision: pipeline.includes(role) ? 'activate' : 'skip',
@@ -301,7 +336,7 @@ function executionDecisions(input, prepared) {
       add({ stage: 'scheduling', waveId, parentDecisionId: parent.decisionId, decision: 'use_worktree', policy: { rule: 'execution.worktree-isolation' }, facts: isolation,
         reasonCodes: [...new Set(isolation.reason.split(':').slice(1).join(':').split(',').map(r => riskCodes[r]).filter(Boolean))] });
     }
-    for (const task of wave) add({ stage: 'dispatch', waveId, taskId: task.id, agentRunId: task.agentRunId, owner: task.owner, files: task.files_modified, decision: 'spawn_' + task.owner, parentDecisionId: parent.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: task.owner === 'implementer' ? ['TASK_OWNER_IMPLEMENTER'] : [], intendedAction: { type: 'spawn', role: task.owner, taskId: task.id }, facts: { dependsOn: task.depends_on } });
+    for (const task of wave) add({ stage: 'dispatch', waveId, taskId: task.id, agentRunId: task.agentRunId, owner: task.owner, files: task.files_modified, decision: 'spawn_' + task.owner, parentDecisionId: parent.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: task.owner === 'implementer' ? ['TASK_OWNER_IMPLEMENTER'] : [], intendedAction: { type: 'spawn', role: task.owner, taskId: task.id }, facts: { dependsOn: task.depends_on, agentIdentityKind: task.agentIdentityKind ?? (task.agentRunId ? 'framework-logical' : null) } });
   });
   for (const route of modelRouting.stages) add({ stage: 'routing', discriminator: route.stage, decision: 'route',
     policy: { rule: route.escalationReasons?.length || route.fallbackReason ? 'routing.failure-escalation' : 'routing.luna-first' }, facts: { ...route },

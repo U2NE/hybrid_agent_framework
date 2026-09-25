@@ -39,6 +39,6 @@ For high-risk consensus plans also require:
 
 Every SPEC acceptance criterion must map to at least one PLAN task before execution.
 
-The lead records planning control-flow choices as bounded decision provenance, including planner-only revisions and whether the current policy requires planning council review. Keep facts, policy identifiers, decisions, intended actions, and evidence references structured. Do not record hidden reasoning, scratchpads, prompts, or conversation text.
+The lead records planning control-flow choices as bounded decision provenance, including planner-only revisions and whether the current policy requires planning council review. `buildPlanningDecision()` remains pure; when it returns an ITERATE decision in real runtime, the Lead persists that decision through the Lead provenance writer and links the actual Planner spawn through the Lead orchestration event writer. Keep facts, policy identifiers, decisions, intended actions, and evidence references structured. Do not record hidden reasoning, scratchpads, prompts, or conversation text.
 
 Build a dependency graph. Never choose concurrency from agent count alone. Prefer tracer-first or vertical-slice ordering where it reduces integration risk.
