@@ -15,14 +15,13 @@ test('repository canonical STATE.md matches the current runtime validation bound
   assert.equal(state.schemaVersion, 1);
   assert.equal(state.phase, '04-hardening');
   assert.equal(state.status, 'verified-interactive-runtime-pending');
-  assert.match(state.nextAction, /rerun authenticated Cases J\/K/i);
   assert.match(state.nextAction, /exercise Case D with genuine user answers/i);
+  assert.match(state.nextAction, /explicit allowlisted model\/effort fail-closed routing/i);
+  assert.match(state.nextAction, /authenticated revised Cases J\/K provenance validation are complete/i);
   assert.match(state.nextAction, /Tier 0 Implementer ownership/i);
-  assert.match(state.nextAction, /Lead-only central action persistence/i);
-  assert.match(state.nextAction, /Case J\/K deterministic preflights/i);
-  assert.match(state.nextAction, /204\/204 regression suite are complete/i);
+  assert.match(state.nextAction, /parallel sibling provenance/i);
+  assert.match(state.nextAction, /Lead-only central persistence/i);
   assert.deepEqual(state.blockers, [
-    'Authenticated Case J/K semantic PASS remains pending because Codex usage quota was exhausted; revised Case J reached automatic persistence plus artifact-backed Implementer mutation and linked worker provenance but not lightweight verification/final audit, while Case K was blocked at turn start',
     'Real Case D has not been exercised because the harness must not invent user responses',
   ]);
 

@@ -12,7 +12,7 @@ updated: 2026-09-25
 - Fresh worker context is reduced by section priority rather than raw prefix truncation; acceptance/constraints/verification remain protected.
 - Parallel writers use worktrees only when side-effect/ownership risk warrants isolation; unavailable worktrees fall back to serialization.
 - Routing is recomputed per stage, so a Sol planning/review stage can downshift to Luna for later routine work.
-- Explicit model rejection falls back by retrying without model/reasoning overrides so Codex can inherit the session/default model.
+- Every Hybrid-controlled inference uses the explicit allowlisted model and reasoning effort selected by routing. Missing/unapproved overrides or runtime rejection fail closed; session/default model inheritance is prohibited.
 - `.planning/` is canonical; this wiki is derived.
 - State schema is `hybrid-state/v1`; unsupported/corrupt state fails closed.
 - Same-file writers are serialized.
@@ -27,5 +27,5 @@ See [[index]] and [[architecture]].
 - Edge probes are applicability-aware gates rather than seven mandatory questions on every task.
 
 - Authenticated A/B/C runtime smoke is semantic, not exit-code-only: output files plus runtime report evidence must pass the validator.
-- Runtime probes confirm Luna high/xhigh/max override request acceptance and invalid-model rejection followed by no-override session inheritance; serving-model identity is intentionally not claimed as independently attested.
+- Historical runtime probes confirmed Luna high/xhigh/max override request acceptance and, under the superseded policy, invalid-model rejection followed by no-override session inheritance. The current deterministic guard rejects invalid/missing model policy locally with no fallback execution; serving-model identity is intentionally not claimed as independently attested.
 - OMC-style ontology convergence is separate from challenge mode: stable/renamed/new/removed entities drive an optional ontology-stabilization question strategy.

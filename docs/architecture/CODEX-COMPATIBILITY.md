@@ -46,7 +46,7 @@ Authenticated runtime validation is complete for:
 - conditional tester/code/security/verifier quality lanes (Case C);
 - accepted Luna medium/high/xhigh/max override requests;
 - bounded Luna-max security review;
-- deliberately rejected invalid model followed by a successful no-override session-inheritance retry.
+- historical: deliberately rejected invalid model followed by a successful no-override session-inheritance retry; this behavior is now superseded by the explicit-model fail-closed policy, which rejects unapproved models locally and performs no model-less retry.
 
 Codex did not expose independent serving-model attestation in these traces. Hybrid therefore records requested model/effort and acceptance/rejection/fallback evidence without claiming an independently verified backend model identity.
 

@@ -30,7 +30,7 @@ Rules:
 - For Tier 2/3, full-tier independent completion requires one final Verifier result that explicitly covers every required AC on the current integrated snapshot, or equivalent criterion-level independent verified evidence for every AC. One independent AC cannot satisfy the whole trace; pre-repair snapshot evidence cannot verify the repaired snapshot.
 - If a required browser/runtime provider is unavailable, keep the criterion unverified rather than fabricating evidence.
 - Context cache, proof selection, and passive observability add no agent/model calls.
-- If an explicit model override is rejected/unavailable, retry without model/reasoning override and record session-inheritance fallback.
+- If an explicit routed model/effort is rejected or unavailable, fail closed; never retry without the override and never inherit the Codex session/default model.
 - `runQualityClosure()` automatically constructs the default Lead decision writer and Lead orchestration event writer when callers do not inject test/custom loggers; repair/proof/completion choices therefore persist best-effort on the normal installed path.
 - Review bounded decision provenance against actual runtime events and worker artifacts with the deterministic audit. Treat reported attribution as reported; never upgrade it to observed.
 - Keep audit findings passive by default. Review facts, stable policy identifiers, action links, and evidence references; never store hidden reasoning, scratchpads, prompts, conversations, source text, or diffs.

@@ -28,6 +28,6 @@ A direct Luna task also exposed `workspace-write` sandbox incompatibility with N
 - live Case B same-file serialization;
 - live Case C tester + code-reviewer + Luna-max security-reviewer sibling QA wave followed by verifier;
 - Luna high/xhigh/max override request acceptance;
-- deliberately rejected invalid model → successful no-override session-inheritance retry.
+- historical: deliberately rejected invalid model → successful no-override session-inheritance retry. This was valid evidence for the former policy and is superseded by the explicit-model fail-closed invariant.
 
 Codex does not independently attest the backend serving-model identity; the evidence is limited to accepted/rejected override requests and observed runtime behavior.

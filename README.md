@@ -25,10 +25,10 @@ Canonical mapping: `core/routing/model-routing.json`
 ```text
 default_model_tier = luna -> gpt-6-luna
 heavy_model_tier   = sol  -> gpt-6-sol
-fallback                 -> session-inheritance
+fallback                 -> fail-closed
 ```
 
-The concrete IDs were confirmed against the Codex CLI 0.156.1 model catalog on 2026-09-25. Agent TOMLs do not statically pin a model; the lead applies the per-stage route. If an explicit model is unavailable/rejected, that spawn is retried without a model/reasoning override so Codex can inherit its session/default model.
+The concrete IDs were confirmed against the Codex CLI 0.156.1 model catalog on 2026-09-25. Agent TOMLs do not statically pin a model; the lead applies the per-stage route. Every Hybrid-controlled inference must pass an explicit allowlisted model and reasoning effort. If that routed override is unavailable or rejected, execution fails closed; Hybrid never retries model-less, inherits the session/default model, or substitutes an arbitrary model.
 
 See `docs/architecture/MODEL-ROUTING.md`.
 
@@ -71,6 +71,6 @@ Installation into a target repository copies the canonical skill snapshots into 
 
 Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, and installer behavior.
 
-Authenticated runtime validation is complete for A/B/C functional cases, sibling parallelism, same-file serialization, quality-lane handoffs, Luna effort overrides, and rejected-model → session-inheritance retry. A genuine user-interactive clarification Case D remains pending by design; backend serving-model identity is not independently attested.
+Historical authenticated runtime validation covered A/B/C functional cases, sibling parallelism, same-file serialization, quality-lane handoffs, Luna effort overrides, and the then-current rejected-model → session-inheritance retry. That fallback evidence is superseded by the explicit-model fail-closed policy; current deterministic validation rejects unapproved or model-less inference before subprocess spawn. Revised authenticated Case J now passes the Implementer-owned Tier 0 provenance contract with explicit Luna/medium routing and a clean audit. Authenticated Case K passes one parallel wave with two independently owned Implementer children, both spawn records before the first completion, explicit Luna/medium worker routes, reported actor artifacts, exact file ownership, and a clean audit. A genuine user-interactive clarification Case D remains pending by design; explicit request acceptance is observed, but backend serving-model identity is not independently attested.
 
 Prepared functional cases are implemented by `scripts/runtime-smoke.mjs`. See `docs/architecture/RUNTIME-SMOKE.md` and `docs/RUNTIME-VALIDATION.md`.

@@ -10,7 +10,7 @@ The following are verified against the current repository and Codex 0.156.1:
 - repository-local skill discovery layout and YAML frontmatter.
 - current Luna/Sol concrete model IDs and supported reasoning-effort catalog.
 - stage-local Luna effort routing and conditional Sol escalation.
-- safe no-override session-inheritance fallback after a rejected model request.
+- explicit allowlisted model + reasoning-effort enforcement with fail-closed rejection before subprocess spawn; session/default inheritance is prohibited.
 - dependency waves, same-file serialization, cycle rejection, and risk-based isolation policy.
 - state persistence/schema compatibility/fail-closed corruption handling.
 - iterative OMC-style clarification state machine and ontology convergence helpers.
@@ -76,9 +76,9 @@ Authenticated PASS.
 - explicit `gpt-6-luna / xhigh` request accepted;
 - explicit `gpt-6-luna / max` request accepted;
 - intentionally invalid model request rejected;
-- retry without model/reasoning override succeeded via session inheritance.
+- historically, the subsequent no-override retry succeeded via session inheritance.
 
-These observations prove request acceptance/rejection and fallback behavior. Codex did not expose independent serving-model attestation, so Hybrid does not claim the backend identity was independently verified.
+That final fallback observation is historical evidence for the superseded policy, not the current contract. The current deterministic guard rejects invalid, unknown, missing-model, missing-effort, and unsupported-effort invocations before an unapproved subprocess can start, and a rejected allowed override is not retried model-less. Codex did not expose independent serving-model attestation, so Hybrid does not claim the backend identity was independently verified.
 
 ### Case E — worktree isolation lifecycle
 
@@ -172,7 +172,7 @@ The tightened Case J contract now requires the normal Tier 0 path to persist pre
 
 The revised deterministic preflight PASSes and rejects exit-zero without decisions, missing/orphaned actions, decision-ID mismatch, Lead implementation bypass, missing worker artifact, worker self-report upgraded to observed, missing/failed audit, missing completion, missing artifact-backed Implementer execution, framework-source bypass, installed-core mutation, and prohibited prompt/hidden-reasoning/raw-source capture.
 
-Authenticated revised Case J reruns were attempted on 2026-09-25. The installed Lead invoked `prepareExecutionWithProvenance()` and automatically persisted the preparation trace. In the later rerun, the target README mutation and the Implementer-owned reported actor artifact were written at the same runtime point, followed by linked Lead-owned spawn/completion records; the Codex JSON stream did not expose a native `spawn_agent` identifier, so the worker remains explicitly `framework-logical` rather than being promoted to a fabricated native-observed identity. The run then failed during lightweight-verification/completion work (a sandboxed nested `git` child-process call returned `EPERM`) and subsequently hit the Codex usage limit before final completion provenance and `audit.json` could be produced. The previous authenticated Case J PASS remains historical evidence for the superseded Lead-direct contract only. The tightened Case J therefore has useful artifact-backed partial evidence, but revised authenticated semantic PASS is still pending.
+Authenticated revised Case J now PASSes. The outer installed Lead explicitly requested `gpt-6-luna` with medium reasoning effort, invoked `prepareExecutionWithProvenance()`, preserved the preclassified Tier 0 fixture, and persisted the preparation trace. The Implementer dispatch decision and spawn action both recorded the policy-derived Luna/medium route; the worker changed only `README.md` and wrote a reported actor artifact. Linked completion, lightweight verification, final completion provenance, installed-core integrity, and `audit.json` all validate cleanly, with no Lead-owned target mutation. The Codex stream did not independently expose a native worker identifier, so the worker remains explicitly `framework-logical`; the evidence attests accepted explicit model requests, not backend serving identity.
 
 The four record types remain distinct: Runtime Event = what happened; Decision Provenance = why Hybrid selected that control-flow action; Actor Artifact = what a specific worker did; Audit = whether the recorded decisions and actions agree. None records hidden chain-of-thought. Writer isolation is enforced by API shape: workers receive a writer bound to their own actor artifact, not the central decision writer. This does not claim an OS sandbox against a hostile process. The audit evaluates declared events, ownership, attribution, and evidence linkage; it cannot detect a filesystem mutation that was never reported through the runtime boundary.
 
@@ -180,7 +180,7 @@ The four record types remain distinct: Runtime Event = what happened; Decision P
 
 Case K adds a disposable installed project with an already-approved two-task plan: task A owns `src/a.txt`, task B owns `src/b.txt`, both are independent and therefore one parallel wave. Deterministic preflight PASS requires one `parallel_wave` parent, two distinct `spawn_implementer` children with the same `waveId` and correct `parentDecisionId`, both spawn actions before the first completion, distinct worker identities, Lead-owned linked spawn/completion events, reported per-worker actor artifacts, exact file ownership, installed API use, installed-core integrity, and a clean audit. Negative fixtures cover a missing child, serialized rather than parallel dispatch, spawn without decision, orphan worker artifact, Lead mutation bypass, cross-write, worker central writes, fabricated observed attribution, missing/failed audit, installed-API bypass, framework-source bypass, and installed-core mutation.
 
-The authenticated Case K live harness is implemented but not currently PASS-evidenced: the same Codex usage limit blocks authenticated execution. Live status remains pending until a real rerun completes.
+Authenticated Case K now PASSes. The outer Lead explicitly requested `gpt-6-luna` / medium. The installed runtime persisted one `parallel_wave` parent and normalized child IDs `task-a` and `task-b`, with distinct framework-logical worker IDs and disjoint ownership of `src/a.txt` and `src/b.txt`. Both Luna/medium spawn actions were recorded before the first completion action, both workers produced reported actor artifacts, both files reached their exact expected contents, no Lead target mutation was observed, installed core remained unchanged, and the deterministic audit reports `ok: true` with no findings.
 
 ## Still intentionally pending
 
@@ -202,8 +202,6 @@ A real live Case D is intentionally not auto-simulated because its core evidence
 The following are not claimed:
 
 - independent serving-model identity attestation beyond accepted model/effort requests;
-- revised authenticated Case J PASS under the tightened Implementer-owned Tier 0 contract until the usage-limited rerun succeeds;
-- authenticated Case K parallel provenance PASS until the usage-limited rerun succeeds;
 - real user-interactive Case D.
 
 ## Installer boundary

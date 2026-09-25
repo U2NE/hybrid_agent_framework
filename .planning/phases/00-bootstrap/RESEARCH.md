@@ -3,7 +3,7 @@
 Observed from pinned GSD Core:
 - Codex roles are emitted as standalone agent TOMLs.
 - The managed Codex config uses a bare agents table with max_depth = 1.
-- Agent model pins are omitted by default so Codex can inherit the session model.
+- Historical bootstrap observation: agent model pins were omitted so Codex could inherit the session model. Current Hybrid execution explicitly supplies an allowlisted routed model and reasoning effort for every inference; session inheritance is prohibited.
 - spec-phase is scout-first and uses ambiguity/edge probes.
 - execution is dependency/wave oriented and strongly evidence-gated.
 

@@ -10,7 +10,7 @@ Hybrid uses lead-owned flat sibling dispatch, tier-aware minimal pipelines, depe
 
 Independent tasks are parallel-eligible in the same wave; dependencies move work to later waves; same-file writers serialize; cycles reject.
 
-Authenticated Codex runtime validation now covers A/B/C spawn/handoff semantics, sibling parallelism, same-file serialization, quality lanes, Luna effort override acceptance, and rejected-model → no-override fallback. Real user-interactive Case D remains intentionally pending, and backend serving-model identity is not independently attested.
+Authenticated Codex runtime history covers A/B/C spawn/handoff semantics, sibling parallelism, same-file serialization, quality lanes, Luna effort override acceptance, revised Case J Implementer-owned Tier 0 provenance, and Case K two-child parallel provenance. The former rejected-model → no-override fallback is superseded by current explicit allowlisted model/effort fail-closed enforcement. J/K outer Leads and Implementer dispatches explicitly request Luna/medium; their current persisted audits are clean. Real user-interactive Case D remains intentionally pending, and backend serving-model identity is not independently attested.
 
 See [[index]] and [[decisions]].
 

@@ -12,4 +12,4 @@ Resolve routing per stage rather than permanently by role. Architect, Plan Audit
 
 A Sol stage does not make later stages sticky-Sol.
 
-Do not statically pin model IDs in every agent TOML. If a requested model is unavailable/rejected, retry the spawn without explicit model/reasoning override and record session-inheritance fallback.
+Do not statically pin model IDs in every agent TOML. Resolve model and reasoning effort from the canonical routing policy for every Hybrid-controlled inference and pass both explicitly. Only policy-listed concrete IDs are allowed. Missing/unapproved model or effort fails before spawn; an allowed override that is unavailable/rejected fails closed without session/default inheritance or arbitrary substitution. The earlier session-inheritance fallback is superseded.

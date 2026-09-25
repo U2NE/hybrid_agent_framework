@@ -57,7 +57,7 @@ Current Codex 0.156.1 surface:
 - model override: `-m/--model`;
 - reasoning override: config key `model_reasoning_effort`.
 
-If the requested model or effort cannot be used, the spawn is retried without model/effort override and the route records `session-inheritance`. Hybrid never invents a replacement model ID.
+Hybrid-controlled inference always supplies both the policy-selected model and reasoning effort. The positive allowlist is derived from this canonical routing policy (`gpt-6-luna`, `gpt-6-sol`). Missing model/effort, an unapproved model, or an unsupported effort is rejected before subprocess spawn. If an allowed explicit override is unavailable or rejected at runtime, execution fails closed: Hybrid does not retry without overrides, inherit the Codex session/default model, or substitute another model. Sol is selected only through the existing routing/escalation rules.
 
 ## Runtime catalog evidence
 

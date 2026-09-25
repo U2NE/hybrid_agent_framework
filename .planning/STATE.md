@@ -6,16 +6,15 @@
   "schemaVersion": 1,
   "phase": "04-hardening",
   "status": "verified-interactive-runtime-pending",
-  "nextAction": "rerun authenticated Cases J/K after Codex usage quota resets and exercise Case D with genuine user answers; tightened Decision Provenance wiring, Tier 0 Implementer ownership, Lead-only central action persistence, automatic preparation/quality-closure persistence, Case J/K deterministic preflights, and the 204/204 regression suite are complete",
+  "nextAction": "exercise Case D with genuine user answers; explicit allowlisted model/effort fail-closed routing and authenticated revised Cases J/K provenance validation are complete, with Tier 0 Implementer ownership, parallel sibling provenance, Lead-only central persistence, and the current full deterministic regression passing",
   "blockers": [
-    "Authenticated Case J/K semantic PASS remains pending because Codex usage quota was exhausted; revised Case J reached automatic persistence plus artifact-backed Implementer mutation and linked worker provenance but not lightweight verification/final audit, while Case K was blocked at turn start",
     "Real Case D has not been exercised because the harness must not invent user responses"
   ],
   "activeSpec": ".planning/phases/04-hardening/SPEC.md",
   "activePlan": ".planning/phases/04-hardening/PLAN.md",
   "clarification": null,
-  "revision": 18,
-  "updatedAt": "2026-09-25T08:53:57Z"
+  "revision": 19,
+  "updatedAt": "2026-09-25T11:24:43Z"
 }
 -->
 
@@ -24,8 +23,8 @@
 - Schema: hybrid-state/v1
 - Phase: 04-hardening
 - Status: verified-interactive-runtime-pending
-- Next action: rerun authenticated Cases J/K after Codex usage quota resets and exercise Case D with genuine user answers; tightened Decision Provenance wiring, Tier 0 Implementer ownership, Lead-only central action persistence, automatic preparation/quality-closure persistence, Case J/K deterministic preflights, and the 204/204 regression suite are complete
-- Revision: 18
-- Updated: 2026-09-25T08:53:57Z
+- Next action: exercise Case D with genuine user answers; explicit allowlisted model/effort fail-closed routing and authenticated revised Cases J/K provenance validation are complete, with Tier 0 Implementer ownership, parallel sibling provenance, Lead-only central persistence, and the current full deterministic regression passing
+- Revision: 19
+- Updated: 2026-09-25T11:24:43Z
 
 This file is canonical project state. Do not silently reconstruct or reset it if the machine-readable block is corrupt or uses an unsupported schema.

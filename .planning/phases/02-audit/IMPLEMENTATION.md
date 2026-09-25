@@ -25,4 +25,4 @@ The existing Node kernel remains canonical. Scheduler, planning/artifacts, conte
 
 ## Routing result
 
-Normal stages resolve to Luna. Complex Planner work, Architect, Plan Auditor, Security Reviewer, and contextual high-risk/high-ambiguity/debug/review stages resolve to Sol. Routing is recomputed per stage so later routine work returns to Luna. Explicit model failure falls back to a retry without model/reasoning override.
+Historical implementation note: normal stages resolved to Luna and contextual high-risk stages could escalate to Sol, with routing recomputed per stage. At that time explicit model failure retried without model/reasoning overrides. That fallback is superseded: current Hybrid execution fails closed and never inherits the session/default model.
