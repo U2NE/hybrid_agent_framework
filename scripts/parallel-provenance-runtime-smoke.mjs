@@ -228,8 +228,8 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     audit,
     actualSiblingWorkersObserved: artifactBackedSiblingExecution({ decisions, events, actorArtifacts }) && !hasLeadTargetMutation(run.stdout, ['src/a.txt', 'src/b.txt']),
     fixtureValid:
-      (await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '')).trimEnd() === 'A1' &&
-      (await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '')).trimEnd() === 'B1',
+      (await fs.readFile(path.join(root, 'src/a.txt'), 'utf8').catch(() => '')) === 'A1\n' &&
+      (await fs.readFile(path.join(root, 'src/b.txt'), 'utf8').catch(() => '')) === 'B1\n',
     installedCoreUnchanged: !changedCore.stdout.trim(),
     installedApiUsed: (await inspectRuntimeSource(root)).installedApiUsed || String(run.stdout).includes('prepareExecutionWithProvenance'),
     frameworkSourceBypass: (await inspectRuntimeSource(root)).frameworkSourceBypass,
