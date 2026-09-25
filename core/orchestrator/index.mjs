@@ -336,10 +336,13 @@ function executionDecisions(input, prepared) {
       add({ stage: 'scheduling', waveId, parentDecisionId: parent.decisionId, decision: 'use_worktree', policy: { rule: 'execution.worktree-isolation' }, facts: isolation,
         reasonCodes: [...new Set(isolation.reason.split(':').slice(1).join(':').split(',').map(r => riskCodes[r]).filter(Boolean))] });
     }
-    for (const task of wave) add({ stage: 'dispatch', waveId, taskId: task.id, agentRunId: task.agentRunId, owner: task.owner, files: task.files_modified, decision: 'spawn_' + task.owner, parentDecisionId: parent.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: task.owner === 'implementer' ? ['TASK_OWNER_IMPLEMENTER'] : [], intendedAction: { type: 'spawn', role: task.owner, taskId: task.id }, facts: { dependsOn: task.depends_on, agentIdentityKind: task.agentIdentityKind ?? (task.agentRunId ? 'framework-logical' : null) } });
+    for (const task of wave) {
+      const taskRoute = modelRouting.stages.find(route => route.stage === task.owner || route.agentRole === task.owner);
+      add({ stage: 'dispatch', waveId, taskId: task.id, agentRunId: task.agentRunId, owner: task.owner, files: task.files_modified, decision: 'spawn_' + task.owner, parentDecisionId: parent.decisionId, policy: { rule: 'execution.task-owner' }, reasonCodes: task.owner === 'implementer' ? ['TASK_OWNER_IMPLEMENTER'] : [], intendedAction: { type: 'spawn', role: task.owner, taskId: task.id }, facts: { dependsOn: task.depends_on, agentIdentityKind: task.agentIdentityKind ?? (task.agentRunId ? 'framework-logical' : null), requestedModel: taskRoute?.model ?? null, requestedReasoningEffort: taskRoute?.reasoningEffort ?? null } });
+    }
   });
   for (const route of modelRouting.stages) add({ stage: 'routing', discriminator: route.stage, decision: 'route',
-    policy: { rule: route.escalationReasons?.length || route.fallbackReason ? 'routing.failure-escalation' : 'routing.luna-first' }, facts: { ...route },
-    reasonCodes: [...new Set([...(route.escalationReasons || []).map(reason => /repeat/.test(reason) ? 'REPEATED_FAILURE' : /luna/.test(reason) ? 'LUNA_MAX_EXHAUSTED' : 'ROUTING_ESCALATION'), ...(route.fallbackReason ? ['ROUTING_SESSION_INHERITANCE_FALLBACK'] : [])])] });
+    policy: { rule: route.escalationReasons?.length ? 'routing.failure-escalation' : 'routing.luna-first' }, facts: { ...route },
+    reasonCodes: [...new Set((route.escalationReasons || []).map(reason => /repeat/.test(reason) ? 'REPEATED_FAILURE' : /luna/.test(reason) ? 'LUNA_MAX_EXHAUSTED' : 'ROUTING_ESCALATION'))] });
   return records;
 }

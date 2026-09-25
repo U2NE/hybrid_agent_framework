@@ -3,7 +3,7 @@
   "default_model_tier": "luna",
   "heavy_model_tier": "sol",
   "default_route": "luna_medium",
-  "fallback": "session-inheritance",
+  "fallback": "fail-closed",
   "runtime_surface": {
     "codex_version_verified": "0.156.1",
     "model_override": "--model / -m",

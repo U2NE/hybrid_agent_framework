@@ -8,6 +8,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { prepareExecution } from '../core/orchestrator/index.mjs';
+import { validateModelSelection } from '../core/routing/index.mjs';
 import {
   confirmInterviewTopology,
   createInterviewState,
@@ -319,6 +320,10 @@ export async function runLiveSmokeCase(name, options = {}) {
     options.sandbox || 'workspace-write',
     '--cd',
     workspace,
+    '-m',
+    'gpt-6-luna',
+    '-c',
+    'model_reasoning_effort="medium"',
     spec.prompt,
   ], {
     cwd: workspace,
@@ -591,7 +596,61 @@ async function seedCase(root, key) {
   }
 }
 
+export function validateCodexExecInvocation(args = []) {
+  if (!Array.isArray(args)) throw modelInvocationError('INVALID_CODEX_ARGS', 'Codex args must be an array');
+  if (args[0] !== 'exec') return { inference: false, model: null, reasoningEffort: null };
+
+  const models = [];
+  const efforts = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = String(args[index]);
+    if (arg === '-m' || arg === '--model') {
+      if (index + 1 < args.length) models.push(String(args[index + 1]));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--model=')) {
+      models.push(arg.slice('--model='.length));
+      continue;
+    }
+    if (arg === '-c' || arg === '--config') {
+      if (index + 1 < args.length) {
+        const effort = parseReasoningEffort(String(args[index + 1]));
+        if (effort) efforts.push(effort);
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('-c=')) {
+      const effort = parseReasoningEffort(arg.slice(3));
+      if (effort) efforts.push(effort);
+      continue;
+    }
+    if (arg.startsWith('--config=')) {
+      const effort = parseReasoningEffort(arg.slice('--config='.length));
+      if (effort) efforts.push(effort);
+    }
+  }
+
+  if (models.length !== 1) {
+    throw modelInvocationError(models.length ? 'MODEL_OVERRIDE_AMBIGUOUS' : 'MODEL_REQUIRED',
+      models.length ? 'Hybrid Codex exec requires exactly one explicit model override' : 'Hybrid Codex exec requires an explicit model override');
+  }
+  if (efforts.length !== 1) {
+    throw modelInvocationError(efforts.length ? 'EFFORT_OVERRIDE_AMBIGUOUS' : 'EFFORT_REQUIRED',
+      efforts.length ? 'Hybrid Codex exec requires exactly one explicit reasoning effort override' : 'Hybrid Codex exec requires an explicit reasoning effort override');
+  }
+
+  try {
+    validateModelSelection(models[0], efforts[0]);
+  } catch (error) {
+    throw modelInvocationError(error.code || 'MODEL_POLICY_VIOLATION', error.message, error.details);
+  }
+  return { inference: true, model: models[0], reasoningEffort: efforts[0] };
+}
+
 export async function runCodexExec(codexBin, args, options = {}) {
+  const invocation = validateCodexExecInvocation(args);
   return new Promise((resolve) => {
     const child = spawn(codexBin, args, {
       cwd: options.cwd,
@@ -616,7 +675,7 @@ export async function runCodexExec(codexBin, args, options = {}) {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      resolve({ ...result, timedOut });
+      resolve({ ...result, timedOut, requestedModel: invocation.model, requestedReasoningEffort: invocation.reasoningEffort });
     };
 
     child.stdout.setEncoding('utf8');
@@ -640,6 +699,18 @@ export async function runCodexExec(codexBin, args, options = {}) {
       });
     });
   });
+}
+
+function parseReasoningEffort(value) {
+  const match = String(value).trim().match(/^model_reasoning_effort=(?:"([^"]+)"|'([^']+)'|([^\s]+))$/);
+  return match ? (match[1] || match[2] || match[3] || null) : null;
+}
+
+function modelInvocationError(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details || {};
+  return error;
 }
 
 export async function runCodexDoctor(codexBin) {

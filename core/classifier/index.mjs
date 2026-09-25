@@ -41,10 +41,16 @@ export const TaskTier = Object.freeze({
 export function classifyTask(input) {
   const normalized = typeof input === 'string' ? { request: input } : { ...input };
   const request = String(normalized.request || '').trim();
-  const knownFiles = Array.isArray(normalized.files) ? normalized.files.filter(Boolean) : [];
+  const knownFiles = Array.isArray(normalized.files)
+    ? normalized.files.filter(Boolean)
+    : Array.isArray(normalized.files_modified)
+      ? normalized.files_modified.filter(Boolean)
+      : [];
   const acceptance = Array.isArray(normalized.acceptanceCriteria)
     ? normalized.acceptanceCriteria.filter(Boolean)
-    : [];
+    : Array.isArray(normalized.acceptance_criteria)
+      ? normalized.acceptance_criteria.filter(Boolean)
+      : [];
   const components = Array.isArray(normalized.components) ? normalized.components.filter(Boolean) : [];
 
   if (normalized.forceTier !== undefined) {

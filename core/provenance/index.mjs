@@ -93,6 +93,29 @@ export async function writeAuditArtifact(audit, options = {}) {
   catch (error) { if (options.strict) throw error; return { ok: false, error: String(error.message) }; }
 }
 
+export function actionForDecision(decision, input = {}) {
+  if (!validateDecision(decision).ok) throw new TypeError('valid decision required for linked action');
+  const action = input.action || decision.intendedAction?.type;
+  if (!action) throw new TypeError('linked action type required');
+  return {
+    ...input,
+    runId: decision.runId,
+    decisionId: decision.decisionId,
+    action,
+    stage: input.stage || decision.stage,
+    taskId: decision.taskId,
+    waveId: decision.waveId,
+    agentRunId: decision.agentRunId,
+    files: input.files || decision.files || [],
+    targetRole: input.targetRole ?? decision.intendedAction?.role ?? null,
+    requestedModel: input.requestedModel ?? decision.facts?.requestedModel ?? null,
+    requestedReasoningEffort: input.requestedReasoningEffort ?? decision.facts?.requestedReasoningEffort ?? null,
+    attribution: input.attribution || 'derived',
+    actorRole: 'lead',
+    role: 'lead',
+  };
+}
+
 export function createLeadProvenanceSession(options = {}) {
   if (options.role && options.role !== 'lead') throw new TypeError('lead provenance session requires lead role');
   const base = { ...options, role: 'lead' };
@@ -101,6 +124,7 @@ export function createLeadProvenanceSession(options = {}) {
   return Object.freeze({
     writeDecision,
     writeAction,
+    writeActionForDecision: (decision, input = {}) => writeAction(actionForDecision(decision, input)),
     writeAudit: audit => writeAuditArtifact(audit, base),
     createActorWriter: agentRunId => createActorArtifactWriter({ ...base, agentRunId }),
   });
@@ -130,7 +154,9 @@ export function auditDecisionTrace({ decisions = [], events = [], actorArtifacts
     if (!d) { add('ORPHAN_ACTION', e); add('MISSING_DECISION', e); continue; }
     if (!matches(d, e) && !(e.action === 'complete' && d.intendedAction?.type === 'spawn' && matches(d, { ...e, action: 'spawn' }))) add('DECISION_ACTION_MISMATCH', e);
     const owner = taskOwnership[e.taskId] || {};
-    const role = d.intendedAction?.role || d.owner || owner.role || owner.owner || (typeof owner === 'string' ? owner : null);
+    const ownershipRole = owner.role || owner.owner || (typeof owner === 'string' ? owner : null);
+    const implementationAction = ['spawn', 'complete', 'dispatch', 'file_mutation'].includes(e.action);
+    const role = d.intendedAction?.role || d.owner || (implementationAction ? ownershipRole : null);
     if (role && eventRole(e) !== role) add('ROLE_OWNERSHIP_MISMATCH', e);
     const files = owner.files_modified || owner.files || d.files;
     if (d.files && (e.files || []).some(file => !d.files.includes(file))) add('FILE_OWNERSHIP_MISMATCH', e);

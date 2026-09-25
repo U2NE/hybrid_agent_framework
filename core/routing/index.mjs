@@ -7,6 +7,33 @@ export const MODEL_ROUTING_POLICY = Object.freeze(
 const LUNA_ORDER = Object.freeze(['luna_medium', 'luna_high', 'luna_xhigh', 'luna_max']);
 const SOL_ORDER = Object.freeze(['sol_high', 'sol_xhigh', 'sol_max']);
 
+export const ALLOWED_MODELS = Object.freeze([
+  ...new Set(Object.values(MODEL_ROUTING_POLICY.levels || {}).map(level => level?.model).filter(Boolean)),
+]);
+
+export function supportedEffortsForModel(model, policy = MODEL_ROUTING_POLICY) {
+  const family = Object.values(policy.levels || {}).find(level => level?.model === model)?.family;
+  if (!family) return [];
+  const values = policy.runtime_surface?.[family + '_supported_efforts'];
+  return Array.isArray(values) ? [...values] : [];
+}
+
+export function validateModelSelection(model, reasoningEffort, policy = MODEL_ROUTING_POLICY) {
+  if (!model) throw routingError('MODEL_REQUIRED', 'Hybrid-controlled inference requires an explicit model');
+  if (!reasoningEffort) throw routingError('EFFORT_REQUIRED', 'Hybrid-controlled inference requires an explicit reasoning effort');
+  const allowed = new Set(Object.values(policy.levels || {}).map(level => level?.model).filter(Boolean));
+  if (!allowed.has(model)) throw routingError('MODEL_NOT_ALLOWED', 'Model is not allowed by Hybrid routing policy: ' + model, { model });
+  const efforts = supportedEffortsForModel(model, policy);
+  if (!efforts.includes(reasoningEffort)) {
+    throw routingError('EFFORT_NOT_ALLOWED', 'Reasoning effort is not allowed for model ' + model + ': ' + reasoningEffort, {
+      model,
+      reasoningEffort,
+      supportedEfforts: efforts,
+    });
+  }
+  return { model, reasoningEffort };
+}
+
 export function resolveRoleRouting(role, options = {}) {
   const policy = mergePolicy(options.policy);
   const context = options.context || {};
@@ -34,54 +61,62 @@ export function resolveRoleRouting(role, options = {}) {
     level.reasoning_effort ||
     null;
 
-  const supportedModels = Array.isArray(options.supportedModels)
-    ? new Set(options.supportedModels.map(String))
-    : null;
-  const overrideSupported = options.modelOverrideSupported !== false;
-  const modelAvailable =
-    attemptedModel === null ||
-    supportedModels === null ||
-    supportedModels.has(attemptedModel);
+  if (!attemptedModel) {
+    throw routingError('MODEL_REQUIRED', 'Resolved Hybrid route has no explicit model', { role, routeLevel });
+  }
+  validateModelSelection(attemptedModel, configuredEffort, policy);
 
-  const supportedEfforts = options.supportedEffortsByModel?.[attemptedModel];
-  const effortAvailable =
-    !configuredEffort ||
-    !Array.isArray(supportedEfforts) ||
-    supportedEfforts.includes(configuredEffort);
+  if (options.modelOverrideSupported === false) {
+    throw routingError('MODEL_OVERRIDE_REJECTED', 'Codex model override is unavailable; session inheritance is prohibited', {
+      role,
+      routeLevel,
+      model: attemptedModel,
+    });
+  }
 
-  const useFallback = !overrideSupported || !modelAvailable || !effortAvailable;
-  const model = useFallback ? null : attemptedModel;
-  const reasoningEffort = model ? configuredEffort : null;
+  if (Array.isArray(options.supportedModels) && !new Set(options.supportedModels.map(String)).has(attemptedModel)) {
+    throw routingError('MODEL_UNAVAILABLE', 'Routed model is unavailable; Hybrid will not inherit or substitute a session model', {
+      role,
+      routeLevel,
+      model: attemptedModel,
+    });
+  }
+
+  const runtimeEfforts = options.supportedEffortsByModel?.[attemptedModel];
+  if (Array.isArray(runtimeEfforts) && !runtimeEfforts.includes(configuredEffort)) {
+    throw routingError('EFFORT_NOT_ALLOWED', 'Routed reasoning effort is unavailable; Hybrid will not drop the override', {
+      role,
+      routeLevel,
+      model: attemptedModel,
+      reasoningEffort: configuredEffort,
+    });
+  }
 
   return {
     role,
     routeLevel,
     modelTier: level.family,
     tier: level.family,
-    model,
+    model: attemptedModel,
     attemptedModel,
-    reasoningEffort,
-    inheritSessionModel: model === null,
+    reasoningEffort: configuredEffort,
+    inheritSessionModel: false,
+    executable: true,
     escalated: level.family === 'sol',
     escalationReasons: [...new Set(reasons)],
     fallback: policy.fallback,
-    fallbackReason: useFallback
-      ? (!overrideSupported
-          ? 'model-override-unsupported'
-          : !modelAvailable
-            ? 'model-not-available'
-            : 'reasoning-effort-not-available')
-      : null,
+    fallbackReason: null,
   };
 }
 
-export function fallbackToSessionInheritance(route, reason = 'runtime-model-rejected') {
+export function failClosedModelRoute(route, reason = 'MODEL_OVERRIDE_REJECTED') {
   if (!route || typeof route !== 'object') throw new TypeError('route is required');
   return {
     ...route,
-    model: null,
-    reasoningEffort: null,
-    inheritSessionModel: true,
+    inheritSessionModel: false,
+    executable: false,
+    blocked: true,
+    fallback: 'fail-closed',
     fallbackReason: reason,
   };
 }
@@ -303,6 +338,13 @@ export function sanitizeModel(value) {
     throw new Error('Refusing non-OpenAI-looking Codex model override: ' + model);
   }
   return model;
+}
+
+function routingError(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  return error;
 }
 
 function mergePolicy(override) {
