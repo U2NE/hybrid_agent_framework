@@ -19,7 +19,7 @@ The following are verified against the current repository and Codex 0.156.1:
 - tier/risk-aware evidence-gated completion, structured proof gaps, and implementer self-claim rejection.
 - bounded repair finding policy/fingerprinting/targeted packets with existing failure-driven routing.
 - deterministic shared context snapshot/cache invalidation and safe cache-miss fallback outside tracked project state.
-- proof-gap-only process/HTTP/configured-browser acquisition; UI changes alone do not force browser execution.
+- proof-gap-only process/HTTP/browser acquisition; browser-required gaps auto-wire the bounded Playwright-compatible provider, while a UI file change alone does not force browser execution. Browser Functional and Browser Adversarial lanes are deterministically covered for activation, safe interaction, installer propagation, CLI fail-closed behavior, and verifier reassessment; no real-browser live smoke is claimed because this repository does not contain Playwright/browser binaries.
 - passive redacted JSONL observability with non-fatal storage failure and no agent/LLM call.
 - deterministic Decision Provenance schema, stable decision IDs, recursive sanitizer, role-separated writers, action linkage, actor artifacts, and audit findings. Decision artifacts contain bounded facts and policy/control-flow choices only.
 - conditional security activation and false-positive controls.

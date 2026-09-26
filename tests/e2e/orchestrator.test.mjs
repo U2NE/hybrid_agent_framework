@@ -113,6 +113,36 @@ test('ordinary backend work leaves every design role inactive', () => {
   }
 });
 
+test('interactive UI behavior activates browser functional QA and high-risk UI adds browser adversarial QA', () => {
+  const base = {
+    task: {
+      request: 'Change checkout button modal behavior',
+      files: ['src/components/Checkout.tsx'],
+    },
+    request: 'Change checkout button modal behavior',
+    browserTargetUrl: 'http://127.0.0.1:3000/checkout',
+    uiBehaviorChanged: true,
+    tasks: [{ id: 'checkout', depends_on: [], files_modified: ['src/components/Checkout.tsx'] }],
+  };
+
+  const normal = prepareExecution(base);
+  assert.equal(normal.browserAssessment.functional, true);
+  assert.ok(normal.pipeline.includes('browser-functional-tester'));
+  assert.equal(normal.pipeline.includes('browser-adversarial-reviewer'), false);
+  assert.equal(route(normal, 'browser-functional-tester').routeLevel, 'luna_medium');
+  const functionalDecision = normal.decisionTrace.find((item) => item.discriminator === 'browser-functional-tester');
+  assert.equal(functionalDecision.decision, 'activate');
+  assert.equal(functionalDecision.policy.rule, 'review.browser-functional-activation');
+
+  const risky = prepareExecution({ ...base, highRegressionRisk: true });
+  assert.equal(risky.browserAssessment.adversarial, true);
+  assert.ok(risky.pipeline.includes('browser-adversarial-reviewer'));
+  assert.equal(route(risky, 'browser-adversarial-reviewer').routeLevel, 'luna_max');
+  const adversarialDecision = risky.decisionTrace.find((item) => item.discriminator === 'browser-adversarial-reviewer');
+  assert.equal(adversarialDecision.decision, 'activate');
+  assert.equal(adversarialDecision.policy.rule, 'review.browser-adversarial-activation');
+});
+
 test('execution graph is sealed only after explicit execution approval', () => {
   const base = {
     task: { request: 'Update parser behavior', files: ['src/parser.js'] },

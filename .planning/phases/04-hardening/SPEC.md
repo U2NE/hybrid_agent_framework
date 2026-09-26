@@ -24,6 +24,10 @@ Reduce orchestration cost for small work while strengthening planning/review/ver
 - Security activation avoids weak keyword false positives.
 - Every acceptance criterion can trace through plan, implementation, and verification.
 - Ontology convergence is available only when domain scope is unstable.
+- Interactive UI behavior can activate a read-only Browser Functional Tester backed by bounded real-browser evidence.
+- Browser-relevant Tier 2/3 or explicit high-regression-risk UI work can activate a separate Browser Adversarial Reviewer for safe repeated/double-click, malformed-input, navigation, and UI state-transition probes.
+- Automatic browser exploration is bounded, same-origin, and non-destructive by default; destructive interaction requires explicit authorization.
+- Browser acquisition uses project-owned `playwright` or `@playwright/test`, fails closed when unavailable, and remains raw evidence until the Verifier consumes the exact `evidenceId`.
 - Runtime smoke validates semantics, not exit code.
 - Authenticated A/B/C are recorded honestly; E/F reach authenticated semantic PASS; G/H reach authenticated semantic PASS through the framework-source generic quality primitive; I reaches authenticated semantic PASS through an installed Lead and installed production primitive; revised J/K reach authenticated provenance PASS with clean audits.
 - Genuine user-interactive Case D and independent backend serving-model attestation remain intentionally unclaimed.

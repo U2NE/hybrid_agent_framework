@@ -189,6 +189,16 @@ export async function acquireProof(gap = {}, options = {}) {
         gap,
         timeoutMs: boundedTimeout(options.timeoutMs),
       });
+      if (result?.available === false) {
+        return {
+          acquired: false,
+          available: false,
+          gap,
+          selection,
+          evidence: null,
+          reason: result.reason || 'browser-provider-unavailable',
+        };
+      }
       const evidence = createRawEvidence({
         kind: 'browser',
         source: result?.source || 'configured-browser-provider',

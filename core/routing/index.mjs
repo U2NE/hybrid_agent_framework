@@ -320,6 +320,28 @@ function baseRouteFor(role, context, policy, reasons) {
     return profile('moderate', 'bounded-adversarial-review');
   }
 
+  if (role === 'browser-adversarial-reviewer') {
+    if (
+      importantArchitecture ||
+      securitySensitive ||
+      context.highRegressionRisk === true ||
+      classification === 'ambiguous'
+    ) {
+      return profile('very_hard', 'high-risk-browser-adversarial-review');
+    }
+    if (difficultReview || architectural || classification === 'complex') {
+      return profile('hard', 'browser-adversarial-review');
+    }
+    return profile('moderate', 'bounded-browser-adversarial-review');
+  }
+
+  if (role === 'browser-functional-tester') {
+    if (context.hardVerification === true || classification === 'complex') {
+      return profile('moderate', 'nontrivial-browser-functional-test');
+    }
+    return profile('routine', 'browser-functional-test');
+  }
+
   if (role === 'debugger') {
     if (complexDebugging) return profile('hard', 'complex-cross-module-debugging');
     return profile('moderate', 'debugging');

@@ -127,6 +127,21 @@ test('browser-only proof fails closed when no browser provider exists', async ()
   assert.equal(result.evidence, null);
 });
 
+test('configured browser provider can report unavailable without fabricating browser evidence', async () => {
+  const gap = { criterionId: 'AC-002', requiredKind: 'browser' };
+  const result = await acquireProof(gap, {
+    browserProvider: async () => ({
+      available: false,
+      success: false,
+      reason: 'playwright-unavailable',
+    }),
+  });
+  assert.equal(result.acquired, false);
+  assert.equal(result.available, false);
+  assert.equal(result.reason, 'playwright-unavailable');
+  assert.equal(result.evidence, null);
+});
+
 test('configured browser provider can return bounded structured evidence without adding an agent', async () => {
   const gap = { criterionId: 'AC-002', requiredKind: 'browser' };
   const result = await acquireProof(gap, {

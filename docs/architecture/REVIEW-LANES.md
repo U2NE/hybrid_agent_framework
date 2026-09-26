@@ -37,6 +37,22 @@ Its primary question is: **under what concrete conditions can this implementatio
 
 The adversarial lane is always present for Tier 2/3 work and may be activated for bounded work by explicit high-regression-risk signals such as concurrency-critical, data-integrity, or failure-prone boundaries. It is not part of the routine Tier 0/1 fast path.
 
+## Browser Functional Tester
+
+The Browser Functional Tester is read-only with respect to repository files and supplies real interaction evidence when acceptance depends on browser behavior. It activates for explicit browser QA, browser-required acceptance, or an interactive UI behavior change. It uses the Hybrid Playwright-compatible provider to execute a bounded scenario or safe same-origin control discovery, including clicks, fills, navigation, assertions, screenshots, and browser telemetry.
+
+Its primary question is: **does the approved interactive behavior actually work when exercised through the browser?**
+
+## Browser Adversarial Reviewer
+
+The Browser Adversarial Reviewer is the interactive break-it lane. It is active for browser-relevant Tier 2/3 work and may activate for bounded high-regression-risk browser work. In addition to normal browser interaction, it probes safe repeated/double clicks, malformed input, refresh/navigation boundaries, UI state transitions, and neighboring interaction regressions.
+
+Automatic exploration remains bounded, same-origin, and non-destructive by default. Controls that look destructive, cross-origin navigation, and submit/reset/file actions are skipped unless the approved browser plan explicitly authorizes destructive interaction.
+
+The browser lanes do not replace the ordinary Tester, Code Reviewer, or Adversarial Reviewer. They add real interaction evidence where static/process evidence is insufficient. Browser-provider success remains raw evidence until the independent Verifier consumes the exact browser `evidenceId` and assesses it.
+
+See `BROWSER-QA.md` for the execution and evidence contract.
+
 ## Conditional specialist reviewers
 
 - Design Reviewer checks approved UI/design contracts and visual/accessibility evidence only when the design lane is active.

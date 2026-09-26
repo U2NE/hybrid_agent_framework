@@ -8,6 +8,7 @@ import { assessSecurityReview } from '../verification/index.mjs';
 import { executionApprovalSubject, sealExecutionPlan } from '../execution-graph/index.mjs';
 import { ExecutionRunStore } from '../transitions/index.mjs';
 import { assessDesignWork } from '../design/index.mjs';
+import { assessBrowserQa } from '../browser/index.mjs';
 
 const ROUTABLE_STAGES = new Set([
   'scout',
@@ -23,6 +24,8 @@ const ROUTABLE_STAGES = new Set([
   'tester',
   'code-reviewer',
   'adversarial-reviewer',
+  'browser-functional-tester',
+  'browser-adversarial-reviewer',
   'security-reviewer',
   'verifier',
   'knowledge-synthesizer',
@@ -40,9 +43,12 @@ export function derivePipeline({
     if (needs.designArchitect) stages.push('design-architect');
     stages.push(...needs.implementationRoles);
     if (needs.tester) stages.push('tester');
-    else stages.push('lightweight-verify');
+    if (needs.browserFunctionalQa) stages.push('browser-functional-tester');
+    if (!needs.tester && !needs.browserFunctionalQa) stages.push('lightweight-verify');
+    if (needs.browserAdversarialQa) stages.push('browser-adversarial-reviewer');
     if (needs.designReviewer) stages.push('design-reviewer');
     if (securityReview) stages.push('security-reviewer');
+    if (needs.browserFunctionalQa || needs.browserAdversarialQa) stages.push('verifier');
     if (needs.knowledge) stages.push('knowledge-synthesizer', 'wiki-lint');
     return stages;
   }
@@ -57,6 +63,8 @@ export function derivePipeline({
     if (needs.tester) stages.push('tester');
     if (needs.review) stages.push('code-reviewer');
     if (needs.adversarialReview) stages.push('adversarial-reviewer');
+    if (needs.browserFunctionalQa) stages.push('browser-functional-tester');
+    if (needs.browserAdversarialQa) stages.push('browser-adversarial-reviewer');
     if (needs.designReviewer) stages.push('design-reviewer');
     if (securityReview) stages.push('security-reviewer');
     stages.push('verifier');
@@ -84,6 +92,8 @@ export function derivePipeline({
   }
 
   stages.push('scheduler', ...needs.implementationRoles, 'tester', 'code-reviewer', 'adversarial-reviewer');
+  if (needs.browserFunctionalQa) stages.push('browser-functional-tester');
+  if (needs.browserAdversarialQa) stages.push('browser-adversarial-reviewer');
   if (needs.designReviewer) stages.push('design-reviewer');
   if (securityReview) stages.push('security-reviewer');
   stages.push('verifier', 'integrate', 'full-test');
@@ -111,6 +121,10 @@ export function prepareExecution(input) {
 
   const securityReview = securityAssessment.required;
   const designAssessment = assessDesignWork(input);
+  const browserAssessment = assessBrowserQa(input, {
+    tier: classification.tier,
+    designAssessment,
+  });
   const baseWaves = input.tasks ? buildExecutionWaves(input.tasks) : [];
   const isolationPlan = planExecutionIsolation(baseWaves, {
     worktreeAvailable: input.worktreeAvailable,
@@ -130,7 +144,8 @@ export function prepareExecution(input) {
     classification,
     securityReview,
     routingContext,
-    designAssessment
+    designAssessment,
+    browserAssessment
   );
   const pipeline = derivePipeline({ classification, securityReview, needs });
   const modelRouting = buildModelRouting(pipeline, routingContext, input.modelRouting || {});
@@ -164,6 +179,7 @@ export function prepareExecution(input) {
     requirements,
     securityReview,
     designAssessment,
+    browserAssessment,
     needs,
     pipeline,
     waves: isolationPlan.waves,
@@ -233,7 +249,7 @@ export async function prepareExecutionWithProvenance(input = {}, options = {}) {
   };
 }
 
-export function derivePipelineNeeds(input, classification, securityReview, routingContext = {}, designAssessment = {}) {
+export function derivePipelineNeeds(input, classification, securityReview, routingContext = {}, designAssessment = {}, browserAssessment = {}) {
   const tier = classification.tier;
   const task = input.task && typeof input.task === 'object' ? input.task : {};
   const tasks = Array.isArray(input.tasks) ? input.tasks : [];
@@ -283,6 +299,8 @@ export function derivePipelineNeeds(input, classification, securityReview, routi
       input.meaningfulLogicChange === true ||
       securityReview === true ||
       tier >= TaskTier.COMPLEX,
+    browserFunctionalQa: browserAssessment.functional === true,
+    browserAdversarialQa: browserAssessment.adversarial === true,
     adversarialReview:
       tier >= TaskTier.COMPLEX ||
       input.adversarialReview === true ||
@@ -425,23 +443,28 @@ function executionDecisions(input, prepared) {
   const records = [];
   const base = { runId: input.runId || 'execution', snapshot: input.snapshot ?? null, revision: input.revision ?? 0, attempt: input.attempt ?? 0 };
   const add = data => { const record = buildDecision({ ...base, ...data }); records.push(record); return record; };
-  const { classification, pipeline, isolationPlan, modelRouting, securityAssessment, designAssessment } = prepared;
+  const { classification, pipeline, isolationPlan, modelRouting, securityAssessment, designAssessment, browserAssessment } = prepared;
   const tierCode = ['TIER0_TRIVIAL', 'TIER1_BOUNDED', 'TIER2_COMPLEX', 'TIER3_AMBIGUOUS'][classification.tier];
   const root = add({ stage: 'classification', decision: 'classify_tier_' + classification.tier, policy: { rule: 'classification.tier' }, facts: { tier: classification.tier, evidence: classification.evidence }, reasonCodes: [tierCode] });
-  for (const role of ['planner', 'scout', 'researcher', 'design-architect', 'implementer', 'design-executor', 'tester', 'code-reviewer', 'adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
+  for (const role of ['planner', 'scout', 'researcher', 'design-architect', 'implementer', 'design-executor', 'tester', 'code-reviewer', 'adversarial-reviewer', 'browser-functional-tester', 'browser-adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier', 'architect', 'plan-auditor']) {
     const stage =
       ['planner', 'architect', 'plan-auditor', 'design-architect'].includes(role)
         ? 'planning'
-        : ['tester', 'code-reviewer', 'adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier'].includes(role)
+        : ['tester', 'code-reviewer', 'adversarial-reviewer', 'browser-functional-tester', 'browser-adversarial-reviewer', 'design-reviewer', 'security-reviewer', 'verifier'].includes(role)
           ? 'review'
           : 'dispatch';
     const designRole = ['design-architect', 'design-executor', 'design-reviewer'].includes(role);
+    const browserRole = ['browser-functional-tester', 'browser-adversarial-reviewer'].includes(role);
     add({ stage, discriminator: role, decision: pipeline.includes(role) ? 'activate' : 'skip',
       policy: {
         rule: role === 'security-reviewer'
           ? 'review.security-activation'
           : role === 'adversarial-reviewer'
             ? 'review.adversarial-activation'
+          : role === 'browser-functional-tester'
+            ? 'review.browser-functional-activation'
+          : role === 'browser-adversarial-reviewer'
+            ? 'review.browser-adversarial-activation'
           : designRole
             ? 'design.conditional-lane'
             : ['architect', 'plan-auditor'].includes(role)
@@ -449,11 +472,18 @@ function executionDecisions(input, prepared) {
               : 'execution.task-owner'
       },
       parentDecisionId: root.decisionId,
-      facts: { targetRole: role, activated: pipeline.includes(role), tier: classification.tier },
+      facts: {
+        targetRole: role,
+        activated: pipeline.includes(role),
+        tier: classification.tier,
+        ...(browserRole ? { browserTargetUrl: browserAssessment?.targetUrl ?? null } : {}),
+      },
       reasonCodes: role === 'security-reviewer'
         ? securityAssessment.reasonCodes
         : role === 'adversarial-reviewer'
           ? (pipeline.includes(role) ? ['ADVERSARIAL_REVIEW_REQUIRED'] : [])
+        : browserRole
+          ? (browserAssessment?.reasonCodes || [])
         : designRole
           ? (designAssessment?.reasonCodes || [])
           : [] });

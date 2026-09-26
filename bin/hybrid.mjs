@@ -19,6 +19,7 @@ import {
 } from '../core/execution-graph/index.mjs';
 import { ModelBudgetStore } from '../core/routing/budget.mjs';
 import { ingestWiki, lintWiki, queryWiki } from '../core/wiki/index.mjs';
+import { runBrowserQa } from '../core/browser/index.mjs';
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -43,6 +44,15 @@ try {
     case 'prepare': {
       const input = await readJsonFile(required(args[0], 'input JSON path'));
       print(prepareExecution(input));
+      break;
+    }
+
+    case 'browser-qa': {
+      const input = await readJsonFile(required(args[0], 'browser QA JSON path'));
+      const root = path.resolve(args[1] || '.');
+      const result = await runBrowserQa(input, { cwd: root });
+      print(result);
+      if (result.available === false || result.success !== true) process.exitCode = 2;
       break;
     }
 
@@ -304,6 +314,7 @@ function help() {
     '  hybrid validate-plan <PLAN.md|plan.json>',
     '  hybrid schedule <PLAN.md|plan.json>',
     '  hybrid prepare <input.json>',
+    '  hybrid browser-qa <browser-qa.json> [project-root]',
     '  hybrid lease acquire <run-id> <task-id> <attempt-id> [project-root]',
     '  hybrid lease extend <run-id> <extension.json> [project-root]',
     '  hybrid lease verify <run-id> <authorization.json> [project-root]',

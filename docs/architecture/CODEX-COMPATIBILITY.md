@@ -44,6 +44,7 @@ Authenticated runtime validation is complete for:
 - sibling parallel execution (Case A);
 - same-file serialization (Case B);
 - conditional tester/code/security/verifier quality lanes (Case C);
+- deterministic Browser Functional / Browser Adversarial role registration, routing, installer propagation, and Playwright-compatible provider contracts; these are repository-level deterministic results, not an authenticated real-browser Codex case;
 - accepted Luna medium/high/xhigh/max override requests;
 - bounded Luna-max security review;
 - historical: deliberately rejected invalid model followed by a successful no-override session-inheritance retry; this behavior is now superseded by the explicit-model fail-closed policy, which rejects unapproved models locally and performs no model-less retry.

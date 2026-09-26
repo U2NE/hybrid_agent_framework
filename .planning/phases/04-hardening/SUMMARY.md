@@ -8,6 +8,8 @@ Worktree execution now carries `hybrid-worktree-owner/v2` ownership identity and
 
 The framework kept its canonical Node implementation, flat Lead-owned dispatch, `hybrid-state/v1` state, `.planning/` source of truth, bounded quality loops, and conditional Sol escalation.
 
+Interactive UI quality now has two explicit lanes. Browser Functional QA exercises acceptance-relevant UI behavior through a bounded Playwright-compatible provider, while Browser Adversarial QA adds safe break-it interaction probes for complex or high-regression-risk browser work. Both roles remain repository-read-only. Automatic exploration stays same-origin and skips destructive controls by default; browser evidence is raw until the independent Verifier consumes its exact `evidenceId`. The provider uses project-owned `playwright` / `@playwright/test` and fails closed when that runtime is unavailable.
+
 Runtime evidence is now broader than the original A/B/C checkpoint. Cases E and F reached authenticated semantic PASS. Cases G and H reached authenticated semantic PASS through the framework-source generic `runQualityClosure()` primitive, so they attest primitive behavior rather than installed-Lead wiring. Case I reached authenticated semantic PASS in a disposable installed project through the installed production primitive. Revised Case J and parallel Case K both reach authenticated semantic PASS for installed decision provenance with explicit Luna/medium requests, worker-owned mutation, installed-core integrity, and clean audits. Genuine user-interactive Case D and independent backend serving-model identity remain intentionally unclaimed.
 
-At the current execution-authority checkpoint, the deterministic regression baseline is `npm test` 352/352 PASS and `npm run test:unit` 121/121 PASS.
+At the current browser-QA hardening checkpoint, the deterministic regression baseline is `npm test` 361/361 PASS and `npm run test:unit` 125/125 PASS.

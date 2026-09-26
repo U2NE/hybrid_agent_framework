@@ -101,6 +101,28 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   }
 });
 
+test('browser QA documentation matches activation, safety, and verifier evidence boundaries', async () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const browserDoc = await fs.readFile(path.join(root, 'docs/architecture/BROWSER-QA.md'), 'utf8');
+  const reviewDoc = await fs.readFile(path.join(root, 'docs/architecture/REVIEW-LANES.md'), 'utf8');
+  const reviewSkill = await fs.readFile(path.join(root, 'skills/review/SKILL.md'), 'utf8');
+  const browserCore = await fs.readFile(path.join(root, 'core/browser/index.mjs'), 'utf8');
+
+  assert.match(browserDoc, /Browser Functional Tester/);
+  assert.match(browserDoc, /Browser Adversarial Reviewer/);
+  assert.match(browserDoc, /project-owned `playwright` or `@playwright\/test`/i);
+  assert.match(browserDoc, /same-origin/i);
+  assert.match(browserDoc, /destructive interaction requires explicit `allowDestructive: true`/i);
+  assert.match(browserDoc, /exact `evidenceId`/i);
+  assert.match(reviewDoc, /browser-functional-tester|Browser Functional Tester/i);
+  assert.match(reviewDoc, /Browser Adversarial Reviewer/i);
+  assert.match(reviewSkill, /bounded safe same-origin control discovery/i);
+  assert.match(reviewSkill, /raw evidence stays unverified/i);
+  assert.match(browserCore, /hybrid-browser-qa\/v1/);
+  assert.match(browserCore, /playwright/);
+  assert.match(browserCore, /allowDestructive/);
+});
+
 test('current-workspace mutation guard documentation matches the enforced ownership boundary', async () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
   const guardDoc = await fs.readFile(
