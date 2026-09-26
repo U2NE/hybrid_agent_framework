@@ -37,6 +37,7 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   const routingDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-ROUTING.md'), 'utf8');
   const budgetDoc = await fs.readFile(path.join(root, 'docs/architecture/MODEL-BUDGET.md'), 'utf8');
   const leaseDoc = await fs.readFile(path.join(root, 'docs/architecture/RESOURCE-LEASES.md'), 'utf8');
+  const approvalDoc = await fs.readFile(path.join(root, 'docs/architecture/APPROVAL-CONTRACT.md'), 'utf8');
 
   assert.equal(policy.default_route, 'luna_medium');
   assert.equal(policy.profiles.moderate, 'luna_high');
@@ -59,7 +60,12 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(routingDoc, /default automatic cap is \*\*3 unique Sol stage-attempt reservations per run\*\*/i);
   assert.match(routingDoc, /MODEL_BUDGET_USER_APPROVAL_REQUIRED/);
   assert.match(budgetDoc, /Lead\/worker agents must not self-issue it/i);
+  assert.match(approvalDoc, /sealed execution graph v4/i);
   assert.match(leaseDoc, /Runtime resource extension barrier/i);
+  assert.match(leaseDoc, /sealed execution isolation mode/i);
+  assert.match(leaseDoc, /hybrid-exec-graph\/v4/);
+  assert.match(leaseDoc, /every successful terminal/i);
+  assert.match(leaseDoc, /invalid for `current-workspace`/i);
   assert.match(leaseDoc, /drain-required/);
   assert.match(leaseDoc, /new attempt/i);
   assert.match(leaseDoc, /never has its dispatch authorization or sealed task contract mutated in place/i);
@@ -76,7 +82,7 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /validates descriptor hash, lease ID, revision, executable agent node, attempt, and effect policy/i);
   assert.match(leaseDoc, /completion from an older graph revision never marks the current revision complete/i);
   assert.match(leaseDoc, /`recovered_task_completed` is recovery-only/i);
-  assert.match(leaseDoc, /direct recovered-terminal commit is independently fenced/i);
+  assert.match(leaseDoc, /direct terminal commits are independently fenced/i);
   assert.match(leaseDoc, /new terminal transition requires the active durable dispatch authorization/i);
   assert.match(leaseDoc, /non-secret `leaseId`/i);
   assert.match(leaseDoc, /lease token and full capability\/task contract are never copied/i);
@@ -132,7 +138,7 @@ test('current-workspace mutation guard documentation matches the enforced owners
   assert.match(guardDoc, /worktree-integration-required/);
   assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
   assert.match(executeSkill, /hybrid-worktree-owner\/v2/);
-  assert.match(executeSkill, /detached patch alone is not completion authority/i);
+  assert.match(executeSkill, /detached patch(?: or worker return)? alone is not completion authority/i);
   assert.match(executeSkill, /completed durable integration journal/i);
   assert.match(executeSkill, /current-workspace mutation guard/);
   assert.match(executeSkill, /Guard completion alone is not release authority/);

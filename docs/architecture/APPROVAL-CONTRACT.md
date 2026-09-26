@@ -93,7 +93,7 @@ prepareExecution()
   -> explicit user approval
   -> createUserApprovalReceipt()
   -> prepareExecution({ executionApproved: true, approvalReceipt })
-  -> sealed execution graph v3
+  -> sealed execution graph v4
 ```
 
 This keeps user authority separate from model capability: a stronger planner or reviewer may explain options, but it cannot mint semantic approval on the user's behalf.

@@ -110,6 +110,7 @@ export class ResourceLeaseStore {
         attemptId: request.attemptId,
         role: request.role,
         effectPolicy: request.effectPolicy,
+        isolationMode: request.isolationMode,
         capabilityGrant: request.capabilityGrant,
         taskContract: request.taskContract,
         status: 'active',
@@ -415,6 +416,7 @@ export function buildTaskLeaseRequest(graph, taskId, attemptId = 'attempt-1') {
       .map((resource) => ({ key: resource.key, mode: resource.mode }))
       .sort(compareResource),
     effect_policy: node.effectPolicy || 'side_effect_free',
+    isolation_mode: node.isolationMode,
   };
   const request = {
     runId: graph.runId,
@@ -424,6 +426,7 @@ export function buildTaskLeaseRequest(graph, taskId, attemptId = 'attempt-1') {
     attemptId: attempt,
     role: node.role,
     effectPolicy: node.effectPolicy || 'side_effect_free',
+    isolationMode: node.isolationMode,
     capabilityGrant: structuredClone(node.capabilityGrant),
     taskContract,
   };
@@ -446,6 +449,7 @@ export function validateDispatchAuthorizationShape(value) {
     'taskId',
     'attemptId',
     'role',
+    'isolationMode',
     'requestFingerprint',
   ]) {
     if (typeof value?.[field] !== 'string' || !value[field]) {
@@ -697,6 +701,7 @@ function authorizationFromLease(lease) {
     attemptId: lease.attemptId,
     role: lease.role,
     effectPolicy: lease.effectPolicy,
+    isolationMode: lease.isolationMode,
     capabilityGrant: structuredClone(lease.capabilityGrant),
     taskContract: structuredClone(lease.taskContract),
     requestFingerprint: lease.requestFingerprint,
@@ -723,7 +728,16 @@ function validateStore(store, runId) {
       if (typeof lease?.requestFingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(lease.requestFingerprint)) {
         errors.push('invalid requestFingerprint');
       }
-      if (!lease?.taskContract || !lease?.capabilityGrant) errors.push('incomplete lease contract');
+      if (!['current-workspace', 'worktree'].includes(lease?.isolationMode)) {
+        errors.push('invalid lease isolationMode');
+      }
+      if (
+        !lease?.taskContract ||
+        !lease?.capabilityGrant ||
+        lease.taskContract.isolation_mode !== lease.isolationMode
+      ) {
+        errors.push('incomplete lease contract');
+      }
       if (lease?.status === 'released') {
         try {
           validateLeaseReleaseProof(lease.releaseResult, lease);

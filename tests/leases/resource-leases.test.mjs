@@ -18,8 +18,8 @@ async function tempProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'hybrid-lease-test-'));
 }
 
-function graphFor(tasks, runId = 'run-lease') {
-  return sealApprovedExecutionPlan({ tasks }, { runId });
+function graphFor(tasks, runId = 'run-lease', options = {}) {
+  return sealApprovedExecutionPlan({ tasks }, { runId, ...options });
 }
 
 function forgedReleaseProofFor(authorization, overrides = {}) {
@@ -79,6 +79,8 @@ test('lease request is deterministically bound to the sealed task contract', () 
 
   assert.equal(first.requestFingerprint, second.requestFingerprint);
   assert.equal(first.descriptorHash, graph.descriptorHash);
+  assert.equal(first.isolationMode, 'current-workspace');
+  assert.equal(first.taskContract.isolation_mode, 'current-workspace');
   assert.deepEqual(first.taskContract.files_modified, ['src/a.js']);
   assert.deepEqual(first.taskContract.reads, ['src/shared.js']);
   assert.deepEqual(first.taskContract.resources, [{
@@ -107,6 +109,8 @@ test('exact acquire replays the same durable lease and authorization', async () 
   assert.equal(first.lease.leaseToken, undefined);
   assert.equal(replay.lease.leaseToken, undefined);
   assert.equal(first.authorization.leaseToken, replay.authorization.leaseToken);
+  assert.equal(first.authorization.isolationMode, 'current-workspace');
+  assert.equal(first.authorization.taskContract.isolation_mode, 'current-workspace');
   assert.equal(await restartedStore.assertAuthorization(graph, replay.authorization), true);
 
   const listed = await restartedStore.list();
@@ -114,6 +118,47 @@ test('exact acquire replays the same durable lease and authorization', async () 
 
   const stat = await fs.stat(first.path);
   assert.equal(stat.mode & 0o777, 0o600);
+});
+
+test('worktree isolation is bound into lease request and dispatch authorization', async () => {
+  const root = await tempProject();
+  const graph = graphFor(
+    [
+      {
+        id: 'A',
+        owner: 'implementer',
+        depends_on: [],
+        files_modified: ['src/a.js'],
+      },
+      {
+        id: 'B',
+        owner: 'implementer',
+        depends_on: [],
+        files_modified: ['src/b.js'],
+      },
+    ],
+    'run-worktree-authority',
+    {
+      worktreeAvailable: true,
+      isolationPlan: {
+        isolation: [{ taskIds: ['A', 'B'], mode: 'worktree' }],
+      },
+    }
+  );
+  const request = buildTaskLeaseRequest(graph, 'A', 'attempt-worktree');
+  assert.equal(request.isolationMode, 'worktree');
+  assert.equal(request.taskContract.isolation_mode, 'worktree');
+
+  const acquired = await new ResourceLeaseStore(root, graph.runId).acquire(
+    graph,
+    'A',
+    'attempt-worktree'
+  );
+  assert.equal(acquired.authorization.isolationMode, 'worktree');
+  assert.equal(
+    acquired.authorization.taskContract.isolation_mode,
+    'worktree'
+  );
 });
 
 test('graph revision fence serializes against concurrent lease acquisition', async () => {

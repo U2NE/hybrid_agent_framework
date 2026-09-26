@@ -53,7 +53,7 @@ test('approved plan seals into a deterministic receipt-bound execution graph', (
   const first = sealExecutionPlan(plan, { ...input, approvalReceipt: receipt });
   const second = sealExecutionPlan(plan, { ...input, approvalReceipt: receipt });
 
-  assert.equal(first.schema, 'hybrid-exec-graph/v3');
+  assert.equal(first.schema, 'hybrid-exec-graph/v4');
   assert.equal(first.descriptorHash, second.descriptorHash);
   assert.equal(first.approvalScopeHash, receipt.receiptHash);
   assert.deepEqual(first.approvalReceipt, receipt);
@@ -64,6 +64,75 @@ test('approved plan seals into a deterministic receipt-bound execution graph', (
   assert.equal(first.concurrencyLimit, 4);
   assert.ok(first.nodes.some((node) => node.id === 'verify-final' && node.kind === 'verification'));
   assert.equal(validateSealedExecutionGraph(first), true);
+});
+
+test('sealed graph binds deterministic scheduler isolation into descriptor authority', () => {
+  const parallelPlan = {
+    tasks: [
+      {
+        id: 'alpha',
+        owner: 'implementer',
+        files_modified: ['src/alpha.js'],
+        depends_on: [],
+      },
+      {
+        id: 'beta',
+        owner: 'implementer',
+        files_modified: ['src/beta.js'],
+        depends_on: [],
+      },
+    ],
+  };
+  const isolationPlan = {
+    isolation: [{
+      taskIds: ['alpha', 'beta'],
+      mode: 'worktree',
+    }],
+  };
+  const graph = sealApprovedExecutionPlan(parallelPlan, {
+    runId: 'run-isolation',
+    worktreeAvailable: true,
+    isolationPlan,
+  });
+
+  assert.equal(
+    graph.nodes.find((node) => node.id === 'alpha').isolationMode,
+    'worktree'
+  );
+  assert.equal(
+    graph.nodes.find((node) => node.id === 'beta').isolationMode,
+    'worktree'
+  );
+  assert.equal(
+    graph.nodes.find((node) => node.id === 'verify-final').isolationMode,
+    'none'
+  );
+
+  const tampered = structuredClone(graph);
+  tampered.nodes.find((node) => node.id === 'alpha').isolationMode =
+    'current-workspace';
+  assert.throws(
+    () => validateSealedExecutionGraph(tampered),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.details.errors.includes('descriptor hash mismatch')
+  );
+
+  assert.throws(
+    () => sealApprovedExecutionPlan(parallelPlan, {
+      runId: 'run-isolation-forged',
+      worktreeAvailable: true,
+      isolationPlan: {
+        isolation: [{
+          taskIds: ['alpha', 'beta'],
+          mode: 'current-workspace',
+        }],
+      },
+    }),
+    (error) =>
+      error instanceof ExecutionGraphError &&
+      error.code === 'EXECUTION_ISOLATION_MISMATCH'
+  );
 });
 
 test('sealed graph carries deterministic role capability grants', () => {

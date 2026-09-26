@@ -151,6 +151,10 @@ export function prepareExecution(input) {
           approvalReceipt: input.approvalReceipt,
           concurrencyLimit: input.concurrencyLimit,
           terminalVerificationNodeId: input.terminalVerificationNodeId,
+          isolationPlan,
+          worktreeAvailable: input.worktreeAvailable,
+          forceWorktree: input.forceWorktree === true,
+          fileOwnershipConfidence: input.fileOwnershipConfidence,
         })
       : null;
 

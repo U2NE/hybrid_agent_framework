@@ -811,8 +811,24 @@ export class ExecutionRunStore {
           );
         }
 
-        if (record.kind === 'recovered_task_completed') {
-          await validateRecoveredCompletionAgainstIntegration(
+        if (
+          record.kind === 'recovered_task_completed' &&
+          authorization.isolationMode !== 'worktree'
+        ) {
+          throw new TransitionError(
+            'recovered completion is valid only for worktree-isolated execution',
+            'RECOVERED_TRANSITION_REQUIRES_WORKTREE',
+            {
+              transitionId: record.transitionId,
+              isolationMode: authorization.isolationMode,
+            }
+          );
+        }
+        if (
+          authorization.isolationMode === 'worktree' &&
+          ['task_completed', 'recovered_task_completed'].includes(record.kind)
+        ) {
+          await validateWorktreeCompletionAgainstIntegration(
             this.projectRoot,
             record,
             authorization
@@ -1086,7 +1102,7 @@ function validateTransitionForLeaseRelease(transition, authorization) {
   return true;
 }
 
-async function validateRecoveredCompletionAgainstIntegration(
+async function validateWorktreeCompletionAgainstIntegration(
   projectRoot,
   record,
   authorization
@@ -1105,8 +1121,8 @@ async function validateRecoveredCompletionAgainstIntegration(
   } catch (error) {
     if (error instanceof WorktreeRuntimeError) {
       throw new TransitionError(
-        'recovered completion integration evidence is invalid',
-        'RECOVERED_TRANSITION_INTEGRATION_INVALID',
+        'worktree completion integration evidence is invalid',
+        'WORKTREE_COMPLETION_INTEGRATION_INVALID',
         {
           transitionId: record.transitionId,
           causeCode: error.code ?? 'UNKNOWN',
@@ -1119,8 +1135,8 @@ async function validateRecoveredCompletionAgainstIntegration(
 
   if (!integrated) {
     throw new TransitionError(
-      'recovered completion requires completed durable integration evidence',
-      'RECOVERED_TRANSITION_INTEGRATION_REQUIRED',
+      'worktree completion requires completed durable integration evidence',
+      'WORKTREE_COMPLETION_INTEGRATION_REQUIRED',
       {
         transitionId: record.transitionId,
         leaseId: authorization.leaseId,
@@ -1173,9 +1189,9 @@ async function validateRecoveredCompletionAgainstIntegration(
 
   if (errors.length) {
     throw new TransitionError(
-      'recovered completion does not match durable integration evidence: ' +
+      'worktree completion does not match durable integration evidence: ' +
         errors.join('; '),
-      'RECOVERED_TRANSITION_INTEGRATION_MISMATCH',
+      'WORKTREE_COMPLETION_INTEGRATION_MISMATCH',
       {
         transitionId: record.transitionId,
         queueId: integrated.queueId,

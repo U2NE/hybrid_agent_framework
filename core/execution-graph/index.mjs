@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import {
   buildExecutionWaves,
   normalizeTask,
+  planExecutionIsolation,
   tasksConflict,
 } from '../scheduler/index.mjs';
 import { roleCapabilityPolicy, validateRoleTaskContract } from '../capabilities/index.mjs';
 import { validateUserApprovalReceipt } from '../approval/index.mjs';
 
-export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v3';
+export const EXECUTION_GRAPH_SCHEMA = 'hybrid-exec-graph/v4';
 export const MATERIAL_REVISION_PROPOSAL_SCHEMA = 'hybrid-material-revision-proposal/v1';
 
 const MATERIAL_FLAGS = Object.freeze({
@@ -66,8 +67,18 @@ export function sealExecutionPlan(plan, options = {}) {
     );
   }
 
+  const isolationByTask = executionIsolationByTask(
+    normalizedTasks,
+    options
+  );
   const taskNodes = normalizedTasks
-    .map((task) => taskNode(task, capabilityContracts.get(task.id)))
+    .map((task) =>
+      taskNode(
+        task,
+        capabilityContracts.get(task.id),
+        isolationByTask.get(task.id)
+      )
+    )
     .sort((a, b) => a.id.localeCompare(b.id));
   const taskIds = new Set(taskNodes.map((node) => node.id));
   const dependedOn = new Set(taskNodes.flatMap((node) => node.dependsOn));
@@ -86,6 +97,7 @@ export function sealExecutionPlan(plan, options = {}) {
     filesModified: [],
     resources: [],
     effectPolicy: 'side_effect_free',
+    isolationMode: 'none',
     acceptanceCriteria: [],
     verify: null,
     capabilityGrant: capabilityGrantForRole('verifier'),
@@ -223,6 +235,18 @@ export function validateSealedExecutionGraph(graph) {
     if (!idSet.has(graph.terminalVerificationNodeId)) errors.push('missing terminal verification node');
 
     for (const node of graph.nodes) {
+      if (
+        node.kind === 'agent' &&
+        !['current-workspace', 'worktree'].includes(node.isolationMode)
+      ) {
+        errors.push('invalid isolation mode: ' + node.id);
+      }
+      if (
+        node.kind === 'verification' &&
+        node.isolationMode !== 'none'
+      ) {
+        errors.push('invalid verification isolation mode: ' + node.id);
+      }
       try {
         const contract = validateRoleTaskContract({
           id: node.id,
@@ -502,6 +526,18 @@ export function sealApprovedMaterialRevision(
     concurrencyLimit: parentGraph.concurrencyLimit,
     terminalVerificationNodeId: parentGraph.terminalVerificationNodeId,
     planHash: proposal.approvalSubject.planHash,
+    ...(options.isolationPlan
+      ? { isolationPlan: options.isolationPlan }
+      : {}),
+    ...(options.worktreeAvailable !== undefined
+      ? { worktreeAvailable: options.worktreeAvailable }
+      : {}),
+    ...(options.forceWorktree !== undefined
+      ? { forceWorktree: options.forceWorktree }
+      : {}),
+    ...(options.fileOwnershipConfidence !== undefined
+      ? { fileOwnershipConfidence: options.fileOwnershipConfidence }
+      : {}),
     ...specOptions,
     approvalReceipt,
   });
@@ -676,7 +712,85 @@ function normalizeMaterialReasonCodes(reasons) {
   )].sort();
 }
 
-function taskNode(task, capabilityContract) {
+function executionIsolationByTask(normalizedTasks, options = {}) {
+  const taskIds = new Set(normalizedTasks.map((task) => task.id));
+  const calculatedPlan = planExecutionIsolation(
+    buildExecutionWaves(normalizedTasks),
+    {
+      worktreeAvailable: options.worktreeAvailable,
+      forceWorktree: options.forceWorktree === true,
+      fileOwnershipConfidence: options.fileOwnershipConfidence,
+    }
+  );
+  const calculated = isolationMapFromPlan(calculatedPlan, taskIds);
+
+  if (
+    options.isolationPlan &&
+    Array.isArray(options.isolationPlan.isolation)
+  ) {
+    const supplied = isolationMapFromPlan(
+      options.isolationPlan,
+      taskIds
+    );
+    if (
+      canonical([...supplied.entries()].sort()) !==
+      canonical([...calculated.entries()].sort())
+    ) {
+      throw new ExecutionGraphError(
+        'supplied isolation plan does not match deterministic scheduler isolation',
+        'EXECUTION_ISOLATION_MISMATCH',
+        {
+          expected: Object.fromEntries([...calculated.entries()].sort()),
+          supplied: Object.fromEntries([...supplied.entries()].sort()),
+        }
+      );
+    }
+  }
+
+  return calculated;
+}
+
+function isolationMapFromPlan(plan, taskIds) {
+  const byTask = new Map();
+  for (const entry of plan?.isolation || []) {
+    if (!['current-workspace', 'worktree'].includes(entry?.mode)) {
+      throw new ExecutionGraphError(
+        'sealed execution isolation must resolve to current-workspace or worktree',
+        'INVALID_EXECUTION_ISOLATION',
+        { entry }
+      );
+    }
+    for (const taskId of entry.taskIds || []) {
+      if (!taskIds.has(taskId)) {
+        throw new ExecutionGraphError(
+          'isolation plan references unknown task ' + taskId,
+          'INVALID_EXECUTION_ISOLATION',
+          { taskId }
+        );
+      }
+      if (byTask.has(taskId)) {
+        throw new ExecutionGraphError(
+          'isolation plan assigns task more than once: ' + taskId,
+          'INVALID_EXECUTION_ISOLATION',
+          { taskId }
+        );
+      }
+      byTask.set(taskId, entry.mode);
+    }
+  }
+
+  const missing = [...taskIds].filter((taskId) => !byTask.has(taskId));
+  if (missing.length) {
+    throw new ExecutionGraphError(
+      'isolation plan is missing executable tasks',
+      'INVALID_EXECUTION_ISOLATION',
+      { missing }
+    );
+  }
+  return byTask;
+}
+
+function taskNode(task, capabilityContract, isolationMode) {
   return {
     id: task.id,
     kind: 'agent',
@@ -687,6 +801,7 @@ function taskNode(task, capabilityContract) {
     filesModified: [...task.files_modified].sort(),
     resources: [...task.resources].sort(compareResource),
     effectPolicy: task.effect_policy,
+    isolationMode,
     acceptanceCriteria: [...(task.acceptance_criteria || [])],
     verify: task.verify || null,
     capabilityGrant: {

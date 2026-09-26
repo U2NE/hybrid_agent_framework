@@ -68,6 +68,16 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   );
   assert.match(leaseCore, /export class ResourceLeaseStore/);
   assert.match(leaseCore, /withGraphRevisionFence/);
+  assert.match(leaseCore, /isolationMode/);
+  assert.match(leaseCore, /isolation_mode/);
+
+  const executionGraphCore = await fs.readFile(
+    path.join(target, '.hybrid', 'core', 'execution-graph', 'index.mjs'),
+    'utf8'
+  );
+  assert.match(executionGraphCore, /hybrid-exec-graph\/v4/);
+  assert.match(executionGraphCore, /EXECUTION_ISOLATION_MISMATCH/);
+  assert.match(executionGraphCore, /isolationMode/);
   assert.match(agents, /active dispatch authorization/);
   assert.match(agents, /Initial run graph binding, graph advancement, and lease acquisition share the lease-store revision fence/);
   assert.match(agents, /concurrent conflicting initial descriptors fail closed with one winner/);
@@ -81,7 +91,8 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(worktreeCore, /readIntegrationJournal/);
   assert.match(worktreeCore, /findCompletedWorktreeIntegration/);
   assert.match(agents, /deterministic durable integration queue/);
-  assert.match(agents, /detached observed patch alone is not recovered-completion or lease-release authority/i);
+  assert.match(agents, /detached observed patch or worker return alone is not successful-completion or lease-release authority/i);
+  assert.match(agents, /Both `task_completed` and `recovered_task_completed` under worktree isolation require/i);
   assert.match(agents, /completed integration journal for the exact attempt\/lease/i);
   assert.match(agents, /task-ID deterministic/);
 
@@ -118,7 +129,9 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   const executeSkill = await fs.readFile(path.join(target, '.agents', 'skills', 'execute', 'SKILL.md'), 'utf8');
   assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
   assert.match(executeSkill, /hybrid-worktree-owner\/v2/);
-  assert.match(executeSkill, /detached patch alone is not completion authority/i);
+  assert.match(executeSkill, /detached patch or worker return alone is not completion authority/i);
+  assert.match(executeSkill, /both ordinary `task_completed` and recovery `recovered_task_completed` require/i);
+  assert.match(executeSkill, /scheduler-selected isolation mode is sealed in execution graph v4/i);
   assert.match(executeSkill, /completed durable integration journal/i);
   assert.match(executeSkill, /`recovered_task_completed` is recovery-only/i);
   assert.match(executeSkill, /current-workspace mutation guard/);

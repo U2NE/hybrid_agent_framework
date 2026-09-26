@@ -136,7 +136,7 @@ test('execution graph is sealed only after explicit execution approval', () => {
     executionApproved: true,
     approvalReceipt: receipt,
   });
-  assert.equal(approved.executionGraph.schema, 'hybrid-exec-graph/v3');
+  assert.equal(approved.executionGraph.schema, 'hybrid-exec-graph/v4');
   assert.equal(approved.executionGraph.runId, 'run-approved');
   assert.equal(approved.executionGraph.approvalScopeHash, receipt.receiptHash);
   assert.deepEqual(approved.executionGraph.approvalReceipt, receipt);
@@ -381,6 +381,7 @@ test('high-ambiguity requirements reasoning uses Luna max before Sol', () => {
 
 test('risky parallel writers use worktree isolation and unavailable worktrees fall back to serialization', () => {
   const input = {
+    runId: 'run-isolation-binding',
     task: {
       request: 'Update package metadata and generated client independently',
       files: ['package-lock.json', 'generated/client.js'],
@@ -397,9 +398,44 @@ test('risky parallel writers use worktree isolation and unavailable worktrees fa
   assert.deepEqual(isolated.waves.map((wave) => wave.map((task) => task.id)), [['client', 'lock']]);
   assert.equal(isolated.isolationPlan.isolation[0].mode, 'worktree');
 
+  const receipt = createUserApprovalReceipt({
+    ...isolated.approvalSubject,
+    approvalId: 'approval-isolation-binding',
+    approvedBy: 'user',
+    approvedAt: '2026-01-01T00:00:00.000Z',
+  });
+  const isolatedApproved = prepareExecution({
+    ...input,
+    worktreeAvailable: true,
+    executionApproved: true,
+    approvalReceipt: receipt,
+  });
+  for (const taskId of ['client', 'lock']) {
+    assert.equal(
+      isolatedApproved.executionGraph.nodes.find(
+        (node) => node.id === taskId
+      ).isolationMode,
+      'worktree'
+    );
+  }
+
   const fallback = prepareExecution({ ...input, worktreeAvailable: false });
   assert.deepEqual(fallback.waves.map((wave) => wave.map((task) => task.id)), [['client'], ['lock']]);
   assert.ok(fallback.isolationPlan.isolation.every((entry) => entry.reason === 'worktree-unavailable-safe-serialization'));
+  const fallbackApproved = prepareExecution({
+    ...input,
+    worktreeAvailable: false,
+    executionApproved: true,
+    approvalReceipt: receipt,
+  });
+  for (const taskId of ['client', 'lock']) {
+    assert.equal(
+      fallbackApproved.executionGraph.nodes.find(
+        (node) => node.id === taskId
+      ).isolationMode,
+      'current-workspace'
+    );
+  }
 });
 
 
