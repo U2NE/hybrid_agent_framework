@@ -10,6 +10,7 @@ import {
   cleanupWorktreeWave,
   collectWorktreeResults,
   createWorktreeWave,
+  findCompletedWorktreeIntegration,
   integrateWorktreeResults,
   listGitWorktrees,
   readIntegrationJournal,
@@ -38,13 +39,38 @@ async function fixture(files) {
   return root;
 }
 
+async function createAuthorizedWorktreeWave(input) {
+  return createWorktreeWave({
+    ...input,
+    tasks: (input.tasks || []).map((task) => ({
+      attemptId: task.attemptId || 'attempt-' + task.id,
+      leaseId: task.leaseId || 'lease-' + task.id,
+      ...task,
+    })),
+  });
+}
+
+test('worktree bridge rejects mutating tasks without attempt and lease identity', async () => {
+  const root = await fixture({
+    'src/a.js': 'export const a = 0;\n',
+  });
+
+  await assert.rejects(
+    () => createWorktreeWave({
+      repoRoot: root,
+      tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
+    }),
+    (error) => error.code === 'WORKTREE_AUTHORITY_IDENTITY_REQUIRED'
+  );
+});
+
 test('worktree bridge creates isolated paths, integrates owned patches, and cleans up', async () => {
   const root = await fixture({
     'src/a.js': 'export const a = 0;\n',
     'src/b.js': 'export const b = 0;\n',
   });
 
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-1',
     revisionId: 'graph-2',
@@ -59,12 +85,14 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
   assert.notEqual(handle.worktrees[0].path, handle.worktrees[1].path);
   assert.equal((await listGitWorktrees(root)).length, 3);
   assert.deepEqual(await readWorktreeOwner(handle.worktrees[0].path), {
-    schema: 'hybrid-worktree-owner/v1',
+    schema: 'hybrid-worktree-owner/v2',
     runId: 'run-1',
     revisionId: 'graph-2',
     graphHash: 'hash-abc',
     taskId: 'a',
     agentRunId: 'agent-a',
+    attemptId: 'attempt-a',
+    leaseId: 'lease-a',
     baseCommit: handle.baseCommit,
   });
 
@@ -76,6 +104,8 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
   assert.ok(collected.results.every((x) => /^[0-9a-f]{64}$/.test(x.patchHash)));
   assert.ok(collected.results.every((x) => x.attribution === 'observed'));
   assert.deepEqual(collected.results.map((x) => x.agentRunId), ['agent-a', 'agent-b']);
+  assert.deepEqual(collected.results.map((x) => x.attemptId), ['attempt-a', 'attempt-b']);
+  assert.deepEqual(collected.results.map((x) => x.leaseId), ['lease-a', 'lease-b']);
 
   const completionOrderIndependent = {
     ...collected,
@@ -95,6 +125,37 @@ test('worktree bridge creates isolated paths, integrates owned patches, and clea
   assert.match(integrated.integrationQueue.queueId, /^[0-9a-f]{64}$/);
   assert.match(integrated.integrationQueue.finalWorkspaceHash, /^[0-9a-f]{64}$/);
 
+  const receipt = await findCompletedWorktreeIntegration({
+    repoRoot: root,
+    runId: 'run-1',
+    revisionId: 'graph-2',
+    graphHash: 'hash-abc',
+    taskId: 'a',
+    attemptId: 'attempt-a',
+    leaseId: 'lease-a',
+  });
+  assert.equal(receipt.schema, 'hybrid-worktree-integration-receipt/v1');
+  assert.equal(receipt.queueId, integrated.integrationQueue.queueId);
+  assert.equal(receipt.record.taskId, 'a');
+  assert.equal(receipt.record.attemptId, 'attempt-a');
+  assert.equal(receipt.record.leaseId, 'lease-a');
+  assert.equal(
+    receipt.finalWorkspaceHash,
+    integrated.integrationQueue.finalWorkspaceHash
+  );
+  assert.equal(
+    await findCompletedWorktreeIntegration({
+      repoRoot: root,
+      runId: 'run-1',
+      revisionId: 'graph-2',
+      graphHash: 'hash-abc',
+      taskId: 'a',
+      attemptId: 'attempt-wrong',
+      leaseId: 'lease-a',
+    }),
+    null
+  );
+
   const replay = await integrateWorktreeResults(completionOrderIndependent);
   assert.equal(replay.integrationQueue.disposition, 'replayed');
   assert.deepEqual(replay.integrated, integrated.integrated);
@@ -113,7 +174,7 @@ test('concurrent integration callers serialize on one durable queue and replay t
   const root = await fixture({
     'src/a.js': 'export const a = 0;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-concurrent',
     tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
@@ -142,7 +203,7 @@ test('integration restart reconciles a patch applied after write-ahead journal b
   const root = await fixture({
     'src/a.js': 'export const a = 0;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-crash-window',
     revisionId: 'G1',
@@ -193,7 +254,7 @@ test('integration snapshot hash includes newly added untracked files', async () 
   const root = await fixture({
     'src/existing.js': 'export const existing = true;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-new-file',
     tasks: [{ id: 'new-file', files_modified: ['src/new.js'] }],
@@ -220,7 +281,7 @@ test('integration rejects a corrupted applied journal record on restart', async 
   const root = await fixture({
     'src/a.js': 'export const a = 0;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-corrupt-journal',
     tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
@@ -253,7 +314,7 @@ test('completed integration preserves unexplained workspace drift and requires r
     'src/a.js': 'export const a = 0;\n',
     'src/other.js': 'export const other = 0;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-drift',
     tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
@@ -280,7 +341,7 @@ test('integration refuses a patch handoff modified after result collection', asy
   const root = await fixture({
     'src/a.js': 'export const a = 0;\n',
   });
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
   });
@@ -306,7 +367,7 @@ test('worktree bridge fails closed on ownership escape before integration', asyn
     'src/other.js': 'export const other = 0;\n',
   });
 
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     tasks: [{ id: 'a', files_modified: ['src/a.js'] }],
   });
@@ -328,7 +389,7 @@ test('worktree result collection rejects tampered execution ownership metadata',
     'src/a.js': 'export const a = 0;\n',
   });
 
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     runId: 'run-owner',
     revisionId: 'revision-1',
@@ -365,7 +426,7 @@ test('worktree integration conflict rolls main workspace back instead of overwri
     'src/shared.js': 'export const value = 0;\n',
   });
 
-  const handle = await createWorktreeWave({
+  const handle = await createAuthorizedWorktreeWave({
     repoRoot: root,
     tasks: [
       { id: 'first', files_modified: ['src/shared.js'] },

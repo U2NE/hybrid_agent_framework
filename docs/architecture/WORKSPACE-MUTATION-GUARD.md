@@ -7,6 +7,12 @@ Hybrid has two mutation isolation paths:
 
 The current-workspace guard closes the same post-execution write-set boundary for tasks that do not need a detached worktree.
 
+## Worktree authority and recovery
+
+Worktree isolation carries non-secret execution authority identity in `hybrid-worktree-owner/v2`: run, graph revision/descriptor, task, attempt, durable lease ID, worker identity, and base commit. The same attempt and lease identity is preserved in the observed patch handoff and the durable `hybrid-worktree-integration/v1` queue. The lease token and full dispatch authorization are not written into worktree owner or integration records.
+
+An observed detached patch is **not** recovered-completion or lease-release authority by itself. After restart, `ExecutionRunStore.recoverTaskLease()` independently validates the durable dispatch authorization, then locates a completed integration journal for the exact run/revision/descriptor/task/attempt/lease through `findCompletedWorktreeIntegration()`. The journal is accepted only while repository HEAD still equals its recorded base and the current main-workspace diff hash still equals the completed final workspace hash. Only that completed durable integration receipt may produce `recovered_task_completed` and evidence-bound lease release. A collected but not integrated patch remains `worktree-integration-required`; mismatched or diverged integration evidence fails closed and keeps the lease unreleased.
+
 ## Required execution order
 
 For a mutating task scheduled in `current-workspace` mode:
@@ -18,11 +24,11 @@ sealed execution graph
   -> worker spawn
   -> workspace-guard complete
   -> task completion evidence / verification
-  -> durable terminal task_completed / recovered_task_completed transition
+  -> durable terminal task_completed transition
   -> evidence-bound lease release using that transition
 ```
 
-A worker may not start before both the resource lease and workspace guard are active. Guard completion is necessary but is not itself lease-release authority. After guard completion succeeds, the Lead must commit a durable terminal `task_completed` or `recovered_task_completed` transition with the guard/verification evidence and then release through `ExecutionRunStore.releaseTaskLease()` / `hybrid lease release`. An abandoned attempt uses `hybrid lease abort` only after reconciliation evidence exists; that path commits `task_aborted_reconciled` before release.
+A worker may not start before both the resource lease and workspace guard are active. Guard completion is necessary but is not itself lease-release authority. After guard completion succeeds, the Lead must commit a durable terminal `task_completed` transition with the guard/verification evidence and then release through `ExecutionRunStore.releaseTaskLease()` / `hybrid lease release`. `recovered_task_completed` is reserved for `recoverTaskLease()` after completed worktree integration evidence is independently revalidated. An abandoned attempt uses `hybrid lease abort` only after reconciliation evidence exists; that path commits `task_aborted_reconciled` before release.
 
 Installed CLI:
 

@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
 const OWNER_FILENAME = 'hybrid-worktree-owner.json';
-const OWNER_SCHEMA = 'hybrid-worktree-owner/v1';
+const OWNER_SCHEMA = 'hybrid-worktree-owner/v2';
 const INTEGRATION_SCHEMA = 'hybrid-worktree-integration/v1';
 
 export class WorktreeRuntimeError extends Error {
@@ -53,6 +53,8 @@ export async function createWorktreeWave({
         graphHash,
         taskId: task.id,
         agentRunId: task.agentRunId || task.agent_run_id || null,
+        attemptId: task.attemptId,
+        leaseId: task.leaseId,
         baseCommit,
       });
       worktrees.push({
@@ -123,6 +125,8 @@ export async function collectWorktreeResults(handle) {
     results.push({
       taskId: worktree.taskId,
       agentRunId: observedOwner.agentRunId,
+      attemptId: observedOwner.attemptId,
+      leaseId: observedOwner.leaseId,
       worktreePath: worktree.path,
       baseCommit: handle.baseCommit,
       changedFiles,
@@ -319,7 +323,151 @@ export async function integrateWorktreeResults(handleWithResults) {
 
 export async function readIntegrationJournal(repoRoot, queueId) {
   const journalPath = await integrationJournalPath(repoRoot, queueId);
-  return loadIntegrationJournal(journalPath);
+  const state = await loadIntegrationJournal(journalPath);
+  validateIntegrationJournal(state, descriptorFromJournalState(state));
+  if (state.queueId !== queueId) {
+    throw new WorktreeRuntimeError(
+      'integration journal path does not match its queue identity',
+      'WORKTREE_INTEGRATION_JOURNAL_FENCED',
+      {
+        expectedQueueId: queueId,
+        observedQueueId: state.queueId,
+        journalPath,
+      }
+    );
+  }
+  return state;
+}
+
+export async function findCompletedWorktreeIntegration({
+  repoRoot,
+  runId,
+  revisionId,
+  graphHash,
+  taskId,
+  attemptId,
+  leaseId,
+} = {}) {
+  const root = path.resolve(String(repoRoot || ''));
+  const expected = {
+    runId: nullableString(runId),
+    revisionId: nullableString(revisionId),
+    graphHash: nullableString(graphHash),
+    taskId: String(taskId || '').trim(),
+    attemptId: String(attemptId || '').trim(),
+    leaseId: String(leaseId || '').trim(),
+  };
+  if (
+    !expected.runId ||
+    !expected.revisionId ||
+    !expected.graphHash ||
+    !expected.taskId ||
+    !expected.attemptId ||
+    !expected.leaseId
+  ) {
+    throw new WorktreeRuntimeError(
+      'completed integration lookup requires run/revision/graph/task/attempt/lease identity',
+      'WORKTREE_INTEGRATION_IDENTITY_REQUIRED',
+      { expected }
+    );
+  }
+
+  const journalDir = await integrationJournalDirectory(root);
+  let entries;
+  try {
+    entries = await fs.readdir(journalDir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+
+  const matches = [];
+  for (const entry of entries
+    .filter((item) => item.isFile() && /^[0-9a-f]{64}\.json$/.test(item.name))
+    .sort((a, b) => a.name.localeCompare(b.name))) {
+    const journalPath = path.join(journalDir, entry.name);
+    const state = await loadIntegrationJournal(journalPath);
+    validateIntegrationJournal(state, descriptorFromJournalState(state));
+    const pathQueueId = entry.name.slice(0, -'.json'.length);
+    if (state.queueId !== pathQueueId) {
+      throw new WorktreeRuntimeError(
+        'integration journal path does not match its queue identity',
+        'WORKTREE_INTEGRATION_JOURNAL_FENCED',
+        {
+          expectedQueueId: pathQueueId,
+          observedQueueId: state.queueId,
+          journalPath,
+        }
+      );
+    }
+    if (
+      state.status !== 'completed' ||
+      (state.runId ?? null) !== expected.runId ||
+      (state.revisionId ?? null) !== expected.revisionId ||
+      (state.graphHash ?? null) !== expected.graphHash
+    ) {
+      continue;
+    }
+
+    const record = state.applied.find(
+      (item) =>
+        item.taskId === expected.taskId &&
+        item.attemptId === expected.attemptId &&
+        item.leaseId === expected.leaseId
+    );
+    if (!record) continue;
+
+    const currentHead = await revParse(root, 'HEAD');
+    if (currentHead !== state.baseCommit) {
+      throw new WorktreeRuntimeError(
+        'completed integration evidence no longer matches repository HEAD',
+        'WORKTREE_INTEGRATION_RECONCILE_REQUIRED',
+        {
+          queueId: state.queueId,
+          expectedHead: state.baseCommit,
+          actualHead: currentHead,
+        }
+      );
+    }
+    const currentHash = await workspaceDiffHash(root);
+    if (currentHash !== state.finalWorkspaceHash) {
+      throw new WorktreeRuntimeError(
+        'completed integration evidence no longer matches the current workspace',
+        'WORKTREE_INTEGRATION_RECONCILE_REQUIRED',
+        {
+          queueId: state.queueId,
+          expectedWorkspaceHash: state.finalWorkspaceHash,
+          actualWorkspaceHash: currentHash,
+        }
+      );
+    }
+
+    matches.push({
+      schema: 'hybrid-worktree-integration-receipt/v1',
+      queueId: state.queueId,
+      journalPath,
+      runId: state.runId,
+      revisionId: state.revisionId,
+      graphHash: state.graphHash,
+      baseCommit: state.baseCommit,
+      finalWorkspaceHash: state.finalWorkspaceHash,
+      record: publicIntegratedRecord(record),
+    });
+  }
+
+  if (matches.length > 1) {
+    throw new WorktreeRuntimeError(
+      'multiple completed integration journals claim the same task attempt lease',
+      'WORKTREE_INTEGRATION_AMBIGUOUS',
+      {
+        taskId: expected.taskId,
+        attemptId: expected.attemptId,
+        leaseId: expected.leaseId,
+        queueIds: matches.map((item) => item.queueId),
+      }
+    );
+  }
+  return matches[0] ?? null;
 }
 
 async function orderedIntegrationResults(handle) {
@@ -388,6 +536,8 @@ function integrationQueueDescriptor(handle, orderedResults) {
     index,
     taskId: result.taskId,
     agentRunId: result.agentRunId || null,
+    attemptId: result.attemptId,
+    leaseId: result.leaseId,
     patchHash: result.patchHash,
     patchBytes: result.patchBytes,
     changedFiles: [...result.changedFiles].sort(),
@@ -413,11 +563,35 @@ async function integrationJournalPath(repoRoot, queueId) {
       'WORKTREE_INTEGRATION_JOURNAL_INVALID'
     );
   }
-  const commonDirRaw = (await runGit(repoRoot, ['rev-parse', '--git-common-dir'])).stdout.trim();
+  return path.join(
+    await integrationJournalDirectory(repoRoot),
+    queueId + '.json'
+  );
+}
+
+async function integrationJournalDirectory(repoRoot) {
+  const commonDirRaw = (
+    await runGit(repoRoot, ['rev-parse', '--git-common-dir'])
+  ).stdout.trim();
   const commonDir = path.isAbsolute(commonDirRaw)
     ? commonDirRaw
     : path.resolve(repoRoot, commonDirRaw);
-  return path.join(commonDir, 'hybrid', 'integration', queueId + '.json');
+  return path.join(commonDir, 'hybrid', 'integration');
+}
+
+function descriptorFromJournalState(state) {
+  const identity = {
+    baseCommit: state?.baseCommit,
+    runId: state?.runId ?? null,
+    revisionId: state?.revisionId ?? null,
+    graphHash: state?.graphHash ?? null,
+    order: state?.order,
+  };
+  return {
+    schema: INTEGRATION_SCHEMA,
+    queueId: createHash('sha256').update(canonical(identity)).digest('hex'),
+    ...identity,
+  };
 }
 
 async function loadIntegrationJournal(journalPath, options = {}) {
@@ -490,6 +664,8 @@ function validateIntegrationJournal(state, descriptor) {
       record?.index === index &&
       record?.taskId === expected?.taskId &&
       (record?.agentRunId ?? null) === (expected?.agentRunId ?? null) &&
+      record?.attemptId === expected?.attemptId &&
+      record?.leaseId === expected?.leaseId &&
       record?.baseCommit === descriptor.baseCommit &&
       record?.patchHash === expected?.patchHash &&
       record?.patchBytes === expected?.patchBytes &&
@@ -608,6 +784,8 @@ function integratedRecord(result, workspaceHash, index) {
     index,
     taskId: result.taskId,
     agentRunId: result.agentRunId || null,
+    attemptId: result.attemptId,
+    leaseId: result.leaseId,
     baseCommit: result.baseCommit,
     changedFiles: [...result.changedFiles],
     patchBytes: result.patchBytes,
@@ -868,6 +1046,10 @@ export async function readWorktreeOwner(worktreePath) {
     owner?.schema !== OWNER_SCHEMA ||
     typeof owner.taskId !== 'string' ||
     !owner.taskId ||
+    typeof owner.attemptId !== 'string' ||
+    !owner.attemptId ||
+    typeof owner.leaseId !== 'string' ||
+    !owner.leaseId ||
     typeof owner.baseCommit !== 'string' ||
     !owner.baseCommit
   ) {
@@ -922,11 +1104,13 @@ async function bindWorktreeOwner(worktreePath, input) {
     graphHash: nullableString(input.graphHash),
     taskId: String(input.taskId || ''),
     agentRunId: nullableString(input.agentRunId),
+    attemptId: String(input.attemptId || ''),
+    leaseId: String(input.leaseId || ''),
     baseCommit: String(input.baseCommit || ''),
   };
-  if (!owner.taskId || !owner.baseCommit) {
+  if (!owner.taskId || !owner.attemptId || !owner.leaseId || !owner.baseCommit) {
     throw new WorktreeRuntimeError(
-      'worktree owner requires taskId and baseCommit',
+      'worktree owner requires taskId, attemptId, leaseId, and baseCommit',
       'WORKTREE_OWNER_INVALID',
       { owner }
     );
@@ -975,6 +1159,8 @@ function ownerMatches(expected, observed) {
     'graphHash',
     'taskId',
     'agentRunId',
+    'attemptId',
+    'leaseId',
     'baseCommit',
   ].every((key) => (expected[key] ?? null) === (observed[key] ?? null));
 }
@@ -1025,7 +1211,16 @@ function normalizeTasks(tasks) {
     if (!files.length) {
       throw new WorktreeRuntimeError('worktree task requires files_modified: ' + id, 'INVALID_WORKTREE_WAVE');
     }
-    return { ...task, id, files_modified: files };
+    const attemptId = String(task.attemptId || '').trim();
+    const leaseId = String(task.leaseId || '').trim();
+    if (!attemptId || !leaseId) {
+      throw new WorktreeRuntimeError(
+        'worktree task requires attemptId and leaseId: ' + id,
+        'WORKTREE_AUTHORITY_IDENTITY_REQUIRED',
+        { taskId: id }
+      );
+    }
+    return { ...task, id, attemptId, leaseId, files_modified: files };
   });
 }
 

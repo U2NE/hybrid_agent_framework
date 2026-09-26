@@ -77,8 +77,12 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
     'utf8'
   );
   assert.match(worktreeCore, /hybrid-worktree-integration\/v1/);
+  assert.match(worktreeCore, /hybrid-worktree-owner\/v2/);
   assert.match(worktreeCore, /readIntegrationJournal/);
+  assert.match(worktreeCore, /findCompletedWorktreeIntegration/);
   assert.match(agents, /deterministic durable integration queue/);
+  assert.match(agents, /detached observed patch alone is not recovered-completion or lease-release authority/i);
+  assert.match(agents, /completed integration journal for the exact attempt\/lease/i);
   assert.match(agents, /task-ID deterministic/);
 
   const workspaceGuardCore = await fs.readFile(
@@ -113,6 +117,10 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(skill, /WRITE_SET_VIOLATION/);
   const executeSkill = await fs.readFile(path.join(target, '.agents', 'skills', 'execute', 'SKILL.md'), 'utf8');
   assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
+  assert.match(executeSkill, /hybrid-worktree-owner\/v2/);
+  assert.match(executeSkill, /detached patch alone is not completion authority/i);
+  assert.match(executeSkill, /completed durable integration journal/i);
+  assert.match(executeSkill, /`recovered_task_completed` is recovery-only/i);
   assert.match(executeSkill, /current-workspace mutation guard/);
   assert.match(executeSkill, /hybrid lease extend/);
   assert.match(executeSkill, /drain-required/);
@@ -159,6 +167,7 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(installedAgents, /created with the task dispatch authorization/);
   assert.match(installedAgents, /New terminal creation requires the durable lease to still be active/);
   assert.match(installedAgents, /Never persist the lease token or full authorization/);
+  assert.match(installedAgents, /`recovered_task_completed` is recovery-only/i);
   assert.match(installedAgents, /per-run durable model budget/);
   assert.match(installedAgents, /default automatic cap is 3 unique Sol stage-attempts per run/);
   assert.match(installedAgents, /MUST NOT self-issue or fabricate a model-budget approval receipt/);

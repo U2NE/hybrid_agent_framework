@@ -24,11 +24,15 @@ const scriptPath = fileURLToPath(import.meta.url);
 const TASKS = Object.freeze([
   {
     id: 'alpha',
+    attemptId: 'attempt-alpha',
+    leaseId: 'lease-alpha',
     files_modified: ['src/alpha.js'],
     expected: 'export const alpha = 1;\n',
   },
   {
     id: 'beta',
+    attemptId: 'attempt-beta',
+    leaseId: 'lease-beta',
     files_modified: ['src/beta.js'],
     expected: 'export const beta = 2;\n',
   },

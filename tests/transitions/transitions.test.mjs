@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   proposeMaterialRevision,
   requestLeaseExtension,
@@ -12,14 +14,49 @@ import { createUserApprovalReceipt } from '../../core/approval/index.mjs';
 import { sealApprovedExecutionPlan } from '../helpers/execution-approval.mjs';
 import { ResourceLeaseStore } from '../../core/leases/index.mjs';
 import {
+  cleanupWorktreeWave,
+  collectWorktreeResults,
+  createWorktreeWave,
+  integrateWorktreeResults,
+} from '../../core/worktree/index.mjs';
+import {
   ExecutionRunStore,
   TransitionError,
   buildTransitionRecord,
   reconcileActivityEvidence,
 } from '../../core/transitions/index.mjs';
 
+const execFileAsync = promisify(execFile);
+
 async function tempProject() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'hybrid-transition-test-'));
+}
+
+async function gitTempProject() {
+  const root = await tempProject();
+  await execFileAsync('git', ['init', '-q'], { cwd: root });
+  await execFileAsync('git', ['config', 'user.name', 'Hybrid Transition Test'], {
+    cwd: root,
+  });
+  await execFileAsync(
+    'git',
+    ['config', 'user.email', 'hybrid-transition@example.invalid'],
+    { cwd: root }
+  );
+  await fs.mkdir(path.join(root, 'src'), { recursive: true });
+  await fs.writeFile(
+    path.join(root, '.gitignore'),
+    '.planning/\n',
+    'utf8'
+  );
+  await fs.writeFile(
+    path.join(root, 'src', 'a.js'),
+    'export const a = 0;\n',
+    'utf8'
+  );
+  await execFileAsync('git', ['add', '.'], { cwd: root });
+  await execFileAsync('git', ['commit', '-qm', 'baseline'], { cwd: root });
+  return root;
 }
 
 function graphFor(effectPolicy = 'reconcile_required') {
@@ -1048,21 +1085,34 @@ test('corrupt transition ledger fails closed on restart', async () => {
   );
 });
 
-test('observed worktree patch recovers completion without redispatch', () => {
+test('observed worktree patch alone requires durable integration before recovered completion', () => {
   const graph = graphFor();
   const patchHash = 'a'.repeat(64);
+  const authorization = {
+    runId: graph.runId,
+    descriptorHash: graph.descriptorHash,
+    graphRevision: graph.revisionId,
+    taskId: 'task-a',
+    attemptId: 'attempt-recovery',
+    leaseId: 'lease-recovery',
+    effectPolicy: 'reconcile_required',
+  };
   const owner = {
-    schema: 'hybrid-worktree-owner/v1',
+    schema: 'hybrid-worktree-owner/v2',
     runId: graph.runId,
     revisionId: graph.revisionId,
     graphHash: graph.descriptorHash,
     taskId: 'task-a',
     agentRunId: 'agent-a',
+    attemptId: authorization.attemptId,
+    leaseId: authorization.leaseId,
     baseCommit: 'base-commit',
   };
   const result = {
     taskId: 'task-a',
     agentRunId: 'agent-a',
+    attemptId: authorization.attemptId,
+    leaseId: authorization.leaseId,
     baseCommit: 'base-commit',
     changedFiles: ['src/a.js'],
     patchHash,
@@ -1072,15 +1122,301 @@ test('observed worktree patch recovers completion without redispatch', () => {
   const recovery = reconcileActivityEvidence({
     graph,
     taskId: 'task-a',
+    authorization,
     worktreeOwner: owner,
     worktreeResult: result,
   });
 
-  assert.equal(recovery.status, 'recover-completed-activity');
+  assert.equal(recovery.status, 'reconcile-required');
   assert.equal(recovery.shouldRedispatch, false);
-  assert.equal(recovery.suggestedTransition.kind, 'recovered_task_completed');
-  assert.equal(recovery.suggestedTransition.result.patchHash, patchHash);
-  assert.ok(recovery.suggestedTransition.evidenceRefs.includes('patch:' + patchHash));
+  assert.equal(recovery.reason, 'worktree-integration-required');
+
+  const missingAuthority = reconcileActivityEvidence({
+    graph,
+    taskId: 'task-a',
+    worktreeOwner: owner,
+    worktreeResult: result,
+  });
+  assert.equal(missingAuthority.status, 'reconcile-required');
+  assert.equal(missingAuthority.reason, 'recovery-authorization-missing');
+
+  const wrongAttempt = reconcileActivityEvidence({
+    graph,
+    taskId: 'task-a',
+    authorization: {
+      ...authorization,
+      attemptId: 'attempt-other',
+    },
+    worktreeOwner: owner,
+    worktreeResult: result,
+  });
+  assert.equal(wrongAttempt.status, 'reconcile-required');
+  assert.equal(wrongAttempt.reason, 'worktree-attempt-mismatch');
+});
+
+test('recoverTaskLease requires completed durable integration and releases idempotently', async () => {
+  const root = await gitTempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await store.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(
+    graph,
+    'task-a',
+    'attempt-recover-durable'
+  );
+
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: graph.runId,
+    revisionId: graph.revisionId,
+    graphHash: graph.descriptorHash,
+    tasks: [{
+      id: 'task-a',
+      agentRunId: 'agent-recover',
+      attemptId: acquired.authorization.attemptId,
+      leaseId: acquired.authorization.leaseId,
+      files_modified: ['src/a.js'],
+    }],
+  });
+
+  let integrated;
+  try {
+    await fs.writeFile(
+      path.join(handle.worktrees[0].path, 'src', 'a.js'),
+      'export const a = 1;\n',
+      'utf8'
+    );
+    const collected = await collectWorktreeResults(handle);
+    const observedOnly = await store.recoverTaskLease(
+      acquired.authorization,
+      {
+        worktreeOwner: collected.results[0].owner,
+        worktreeResult: collected.results[0],
+      }
+    );
+    assert.equal(observedOnly.status, 'reconcile-required');
+    assert.equal(
+      observedOnly.recovery.reason,
+      'worktree-integration-required'
+    );
+    assert.equal(
+      (await leaseStore.list({ activeOnly: true })).leases.length,
+      1
+    );
+
+    await assert.rejects(
+      () => store.commitTransition({
+        authorization: acquired.authorization,
+        transitionId: 'direct-recovery-before-integration',
+        descriptorHash: graph.descriptorHash,
+        leaseId: acquired.authorization.leaseId,
+        graphRevision: graph.revisionId,
+        nodeId: 'task-a',
+        attemptId: acquired.authorization.attemptId,
+        kind: 'recovered_task_completed',
+        effectPolicy: acquired.authorization.effectPolicy,
+        request: {
+          descriptorHash: graph.descriptorHash,
+          leaseId: acquired.authorization.leaseId,
+        },
+        evidenceRefs: ['patch:' + collected.results[0].patchHash],
+        result: {
+          patchHash: collected.results[0].patchHash,
+          baseCommit: collected.results[0].baseCommit,
+          changedFiles: collected.results[0].changedFiles,
+          attribution: 'observed',
+        },
+      }),
+      (error) =>
+        error instanceof TransitionError &&
+        error.code === 'RECOVERED_TRANSITION_INTEGRATION_REQUIRED'
+    );
+
+    integrated = await integrateWorktreeResults(collected);
+
+    await assert.rejects(
+      () => store.commitTransition({
+        authorization: acquired.authorization,
+        transitionId: 'direct-recovery-mismatched-integration',
+        descriptorHash: graph.descriptorHash,
+        leaseId: acquired.authorization.leaseId,
+        graphRevision: graph.revisionId,
+        nodeId: 'task-a',
+        attemptId: acquired.authorization.attemptId,
+        kind: 'recovered_task_completed',
+        effectPolicy: acquired.authorization.effectPolicy,
+        request: {
+          descriptorHash: graph.descriptorHash,
+          leaseId: acquired.authorization.leaseId,
+        },
+        evidenceRefs: [
+          'patch:' + collected.results[0].patchHash,
+          'integration:' + integrated.integrationQueue.queueId,
+          'workspace:' + integrated.integrationQueue.finalWorkspaceHash,
+          'file:src/a.js',
+        ],
+        result: {
+          patchHash: 'f'.repeat(64),
+          baseCommit: collected.results[0].baseCommit,
+          changedFiles: ['src/a.js'],
+          integrationQueueId: integrated.integrationQueue.queueId,
+          integratedWorkspaceHash: integrated.integrated[0].workspaceHash,
+          finalWorkspaceHash: integrated.integrationQueue.finalWorkspaceHash,
+          attribution: 'observed',
+        },
+      }),
+      (error) =>
+        error instanceof TransitionError &&
+        error.code === 'RECOVERED_TRANSITION_INTEGRATION_MISMATCH' &&
+        error.details.errors.includes('patchHash mismatch')
+    );
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+
+  const first = await store.recoverTaskLease(acquired.authorization);
+  assert.equal(first.status, 'recovered-released');
+  assert.equal(first.transition.kind, 'recovered_task_completed');
+  assert.equal(
+    first.transition.attemptId,
+    acquired.authorization.attemptId
+  );
+  assert.equal(first.transition.leaseId, acquired.authorization.leaseId);
+  assert.equal(
+    first.transition.result.integrationQueueId,
+    integrated.integrationQueue.queueId
+  );
+  assert.equal(
+    first.transition.result.finalWorkspaceHash,
+    integrated.integrationQueue.finalWorkspaceHash
+  );
+  assert.ok(
+    first.transition.evidenceRefs.includes(
+      'integration:' + integrated.integrationQueue.queueId
+    )
+  );
+  assert.ok(
+    first.transition.evidenceRefs.includes(
+      'workspace:' + integrated.integrationQueue.finalWorkspaceHash
+    )
+  );
+  assert.equal(
+    (await leaseStore.list({ activeOnly: true })).leases.length,
+    0
+  );
+
+  const replay = await store.recoverTaskLease(acquired.authorization);
+  assert.equal(replay.status, 'replayed');
+  assert.equal(
+    replay.transition.transitionId,
+    first.transition.transitionId
+  );
+});
+
+test('recoverTaskLease rejects mismatched detached evidence without releasing the lease', async () => {
+  const root = await gitTempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await store.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(
+    graph,
+    'task-a',
+    'attempt-recover-current'
+  );
+
+  const recovery = await store.recoverTaskLease(
+    acquired.authorization,
+    {
+      worktreeOwner: {
+        schema: 'hybrid-worktree-owner/v2',
+        runId: graph.runId,
+        revisionId: graph.revisionId,
+        graphHash: graph.descriptorHash,
+        taskId: 'task-a',
+        agentRunId: 'agent-old',
+        attemptId: 'attempt-old',
+        leaseId: 'lease-old',
+        baseCommit: 'base-old',
+      },
+      worktreeResult: {
+        taskId: 'task-a',
+        agentRunId: 'agent-old',
+        attemptId: 'attempt-old',
+        leaseId: 'lease-old',
+        baseCommit: 'base-old',
+        changedFiles: ['src/a.js'],
+        patchHash: 'd'.repeat(64),
+        attribution: 'observed',
+      },
+    }
+  );
+
+  assert.equal(recovery.status, 'reconcile-required');
+  assert.equal(recovery.recovery.reason, 'worktree-attempt-mismatch');
+  assert.equal(
+    (await leaseStore.list({ activeOnly: true })).leases.length,
+    1
+  );
+});
+
+test('recoverTaskLease fails closed when completed integration no longer matches the workspace', async () => {
+  const root = await gitTempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await store.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(
+    graph,
+    'task-a',
+    'attempt-recover-tampered'
+  );
+
+  const handle = await createWorktreeWave({
+    repoRoot: root,
+    runId: graph.runId,
+    revisionId: graph.revisionId,
+    graphHash: graph.descriptorHash,
+    tasks: [{
+      id: 'task-a',
+      agentRunId: 'agent-tamper',
+      attemptId: acquired.authorization.attemptId,
+      leaseId: acquired.authorization.leaseId,
+      files_modified: ['src/a.js'],
+    }],
+  });
+
+  try {
+    await fs.writeFile(
+      path.join(handle.worktrees[0].path, 'src', 'a.js'),
+      'export const a = 2;\n',
+      'utf8'
+    );
+    const collected = await collectWorktreeResults(handle);
+    await integrateWorktreeResults(collected);
+  } finally {
+    await cleanupWorktreeWave(handle, { suppressErrors: true });
+  }
+
+  await fs.writeFile(
+    path.join(root, 'src', 'a.js'),
+    'export const a = 999;\n',
+    'utf8'
+  );
+
+  await assert.rejects(
+    () => store.recoverTaskLease(acquired.authorization),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'RECOVERY_INTEGRATION_INVALID' &&
+      error.details.causeCode ===
+        'WORKTREE_INTEGRATION_RECONCILE_REQUIRED'
+  );
+  assert.equal(
+    (await leaseStore.list({ activeOnly: true })).leases.length,
+    1
+  );
 });
 
 test('unsafe unknown effects stop for reconciliation while idempotent work can retry', () => {

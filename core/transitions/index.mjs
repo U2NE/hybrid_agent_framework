@@ -10,6 +10,10 @@ import {
   ResourceLeaseError,
   ResourceLeaseStore,
 } from '../leases/index.mjs';
+import {
+  findCompletedWorktreeIntegration,
+  WorktreeRuntimeError,
+} from '../worktree/index.mjs';
 
 export const TRANSITION_SCHEMA = 'hybrid-transition/v1';
 
@@ -363,6 +367,161 @@ export class ExecutionRunStore {
     };
   }
 
+  async recoverTaskLease(authorization, input = {}) {
+    if (
+      !authorization ||
+      typeof authorization !== 'object' ||
+      Array.isArray(authorization)
+    ) {
+      throw new TransitionError(
+        'dispatch authorization is required for recovered completion',
+        'RECOVERY_AUTHORIZATION_REQUIRED'
+      );
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new TransitionError(
+        'recovered completion input must be an object',
+        'INVALID_RECOVERY_INPUT'
+      );
+    }
+
+    const graph = await this.loadGraphRevision(authorization.descriptorHash);
+    const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+    await leaseStore.assertAuthorization(
+      graph,
+      authorization,
+      { allowReleased: true }
+    );
+
+    const transitions = await this.loadTransitions();
+    const prior = reconcileActivityEvidence({
+      graph,
+      taskId: authorization.taskId,
+      authorization,
+      transitions,
+    });
+
+    if (prior.status === 'already-completed') {
+      const released = await this.releaseTaskLease(
+        authorization,
+        prior.evidence.transitionId
+      );
+      return {
+        status:
+          released.status === 'released'
+            ? 'recovered-released'
+            : 'replayed',
+        recovery: prior,
+        transition: prior.evidence,
+        proof: released.proof,
+        lease: released.lease,
+        path: released.path,
+      };
+    }
+
+    let integrated = null;
+    try {
+      integrated = await findCompletedWorktreeIntegration({
+        repoRoot: this.projectRoot,
+        runId: authorization.runId,
+        revisionId: authorization.graphRevision,
+        graphHash: authorization.descriptorHash,
+        taskId: authorization.taskId,
+        attemptId: authorization.attemptId,
+        leaseId: authorization.leaseId,
+      });
+    } catch (error) {
+      if (error instanceof WorktreeRuntimeError) {
+        throw new TransitionError(
+          'durable worktree integration evidence is invalid',
+          'RECOVERY_INTEGRATION_INVALID',
+          {
+            causeCode: error.code ?? 'UNKNOWN',
+            causeDetails: error.details ?? {},
+          }
+        );
+      }
+      throw error;
+    }
+
+    let recovery;
+    if (integrated) {
+      const record = integrated.record;
+      recovery = reconcileActivityEvidence({
+        graph,
+        taskId: authorization.taskId,
+        authorization,
+        worktreeOwner: {
+          schema: 'hybrid-worktree-owner/v2',
+          runId: integrated.runId,
+          revisionId: integrated.revisionId,
+          graphHash: integrated.graphHash,
+          taskId: record.taskId,
+          agentRunId: record.agentRunId ?? null,
+          attemptId: record.attemptId,
+          leaseId: record.leaseId,
+          baseCommit: integrated.baseCommit,
+        },
+        worktreeResult: {
+          taskId: record.taskId,
+          agentRunId: record.agentRunId ?? null,
+          attemptId: record.attemptId,
+          leaseId: record.leaseId,
+          baseCommit: integrated.baseCommit,
+          changedFiles: [...record.changedFiles],
+          patchHash: record.patchHash,
+          attribution: 'observed',
+          integrationStatus: 'completed',
+          integrationQueueId: integrated.queueId,
+          integratedWorkspaceHash: record.workspaceHash,
+          finalWorkspaceHash: integrated.finalWorkspaceHash,
+        },
+        transitions,
+      });
+    } else {
+      recovery = reconcileActivityEvidence({
+        graph,
+        taskId: authorization.taskId,
+        authorization,
+        worktreeOwner: input.worktreeOwner ?? null,
+        worktreeResult: input.worktreeResult ?? null,
+        transitions,
+      });
+    }
+
+    if (
+      recovery.status !== 'recover-completed-activity' ||
+      !recovery.suggestedTransition
+    ) {
+      return {
+        status: recovery.status,
+        recovery,
+        released: false,
+      };
+    }
+
+    const committed = await this.commitTransition({
+      authorization,
+      ...recovery.suggestedTransition,
+    });
+    const released = await this.releaseTaskLease(
+      authorization,
+      committed.record.transitionId
+    );
+
+    return {
+      status:
+        released.status === 'released'
+          ? 'recovered-released'
+          : 'replayed',
+      recovery,
+      transition: committed.record,
+      proof: released.proof,
+      lease: released.lease,
+      path: released.path,
+    };
+  }
+
   async loadGraphRevision(descriptorHash) {
     const hash = String(descriptorHash || '').trim();
     if (!/^[0-9a-f]{64}$/.test(hash)) {
@@ -652,6 +811,14 @@ export class ExecutionRunStore {
           );
         }
 
+        if (record.kind === 'recovered_task_completed') {
+          await validateRecoveredCompletionAgainstIntegration(
+            this.projectRoot,
+            record,
+            authorization
+          );
+        }
+
         const graph = await this.loadGraph();
         validateTerminalTransitionAgainstGraph(record, graph);
         return this.#commitRecord(record);
@@ -919,6 +1086,106 @@ function validateTransitionForLeaseRelease(transition, authorization) {
   return true;
 }
 
+async function validateRecoveredCompletionAgainstIntegration(
+  projectRoot,
+  record,
+  authorization
+) {
+  let integrated;
+  try {
+    integrated = await findCompletedWorktreeIntegration({
+      repoRoot: projectRoot,
+      runId: authorization.runId,
+      revisionId: authorization.graphRevision,
+      graphHash: authorization.descriptorHash,
+      taskId: authorization.taskId,
+      attemptId: authorization.attemptId,
+      leaseId: authorization.leaseId,
+    });
+  } catch (error) {
+    if (error instanceof WorktreeRuntimeError) {
+      throw new TransitionError(
+        'recovered completion integration evidence is invalid',
+        'RECOVERED_TRANSITION_INTEGRATION_INVALID',
+        {
+          transitionId: record.transitionId,
+          causeCode: error.code ?? 'UNKNOWN',
+          causeDetails: error.details ?? {},
+        }
+      );
+    }
+    throw error;
+  }
+
+  if (!integrated) {
+    throw new TransitionError(
+      'recovered completion requires completed durable integration evidence',
+      'RECOVERED_TRANSITION_INTEGRATION_REQUIRED',
+      {
+        transitionId: record.transitionId,
+        leaseId: authorization.leaseId,
+      }
+    );
+  }
+
+  const source = integrated.record;
+  const expectedChangedFiles = [...source.changedFiles].sort();
+  const observedChangedFiles = [
+    ...(Array.isArray(record.result?.changedFiles)
+      ? record.result.changedFiles
+      : []),
+  ].sort();
+  const errors = [];
+
+  if (record.result?.patchHash !== source.patchHash) {
+    errors.push('patchHash mismatch');
+  }
+  if (record.result?.baseCommit !== integrated.baseCommit) {
+    errors.push('baseCommit mismatch');
+  }
+  if (canonical(observedChangedFiles) !== canonical(expectedChangedFiles)) {
+    errors.push('changedFiles mismatch');
+  }
+  if (record.result?.integrationQueueId !== integrated.queueId) {
+    errors.push('integrationQueueId mismatch');
+  }
+  if (record.result?.integratedWorkspaceHash !== source.workspaceHash) {
+    errors.push('integratedWorkspaceHash mismatch');
+  }
+  if (record.result?.finalWorkspaceHash !== integrated.finalWorkspaceHash) {
+    errors.push('finalWorkspaceHash mismatch');
+  }
+  if (record.result?.attribution !== 'observed') {
+    errors.push('attribution mismatch');
+  }
+
+  const requiredEvidence = [
+    'patch:' + source.patchHash,
+    'integration:' + integrated.queueId,
+    'workspace:' + integrated.finalWorkspaceHash,
+    ...expectedChangedFiles.map((file) => 'file:' + file),
+  ];
+  for (const evidence of requiredEvidence) {
+    if (!record.evidenceRefs.includes(evidence)) {
+      errors.push('missing evidence ' + evidence);
+    }
+  }
+
+  if (errors.length) {
+    throw new TransitionError(
+      'recovered completion does not match durable integration evidence: ' +
+        errors.join('; '),
+      'RECOVERED_TRANSITION_INTEGRATION_MISMATCH',
+      {
+        transitionId: record.transitionId,
+        queueId: integrated.queueId,
+        errors,
+      }
+    );
+  }
+  return integrated;
+}
+
 function validateTerminalTransitionAgainstAuthorization(
   record,
   authorization
@@ -1008,12 +1275,15 @@ export function transitionRequestFingerprint(value) {
 export function reconcileActivityEvidence({
   graph,
   taskId,
+  authorization = null,
   worktreeOwner = null,
   worktreeResult = null,
   transitions = [],
 } = {}) {
   validateSealedExecutionGraph(graph);
-  const node = graph.nodes.find((item) => item.id === taskId && item.kind === 'agent');
+  const node = graph.nodes.find(
+    (item) => item.id === taskId && item.kind === 'agent'
+  );
   if (!node) {
     throw new TransitionError(
       'recovery target is not an executable graph node: ' + taskId,
@@ -1028,6 +1298,13 @@ export function reconcileActivityEvidence({
       record?.graphRevision === graph.revisionId &&
       record?.nodeId === taskId &&
       record?.effectPolicy === node.effectPolicy &&
+      (
+        !authorization ||
+        (
+          record?.attemptId === authorization.attemptId &&
+          record?.leaseId === authorization.leaseId
+        )
+      ) &&
       ['task_completed', 'recovered_task_completed'].includes(record?.kind)
   );
   if (completed) {
@@ -1042,6 +1319,7 @@ export function reconcileActivityEvidence({
   const observed = validateObservedWorktreeEvidence(
     graph,
     node,
+    authorization,
     worktreeOwner,
     worktreeResult
   );
@@ -1050,7 +1328,11 @@ export function reconcileActivityEvidence({
       'recover-' +
       safeDigestSegment(taskId) +
       '-' +
-      worktreeResult.patchHash.slice(0, 16);
+      safeDigestSegment(authorization.attemptId) +
+      '-' +
+      worktreeResult.integrationQueueId.slice(0, 12) +
+      '-' +
+      worktreeResult.patchHash.slice(0, 12);
     return {
       status: 'recover-completed-activity',
       shouldRedispatch: false,
@@ -1058,24 +1340,35 @@ export function reconcileActivityEvidence({
       evidence: observed.evidence,
       suggestedTransition: {
         transitionId,
-        graphRevision: graph.revisionId,
+        descriptorHash: authorization.descriptorHash,
+        leaseId: authorization.leaseId,
+        graphRevision: authorization.graphRevision,
         nodeId: taskId,
-        attemptId: 'recovery-1',
+        attemptId: authorization.attemptId,
         kind: 'recovered_task_completed',
         effectPolicy: node.effectPolicy,
         request: {
-          descriptorHash: graph.descriptorHash,
+          descriptorHash: authorization.descriptorHash,
+          leaseId: authorization.leaseId,
           patchHash: worktreeResult.patchHash,
           baseCommit: worktreeResult.baseCommit,
+          integrationQueueId: worktreeResult.integrationQueueId,
+          integratedWorkspaceHash: worktreeResult.integratedWorkspaceHash,
+          finalWorkspaceHash: worktreeResult.finalWorkspaceHash,
         },
         evidenceRefs: [
           'patch:' + worktreeResult.patchHash,
+          'integration:' + worktreeResult.integrationQueueId,
+          'workspace:' + worktreeResult.finalWorkspaceHash,
           ...worktreeResult.changedFiles.map((file) => 'file:' + file),
         ],
         result: {
           patchHash: worktreeResult.patchHash,
           baseCommit: worktreeResult.baseCommit,
           changedFiles: worktreeResult.changedFiles,
+          integrationQueueId: worktreeResult.integrationQueueId,
+          integratedWorkspaceHash: worktreeResult.integratedWorkspaceHash,
+          finalWorkspaceHash: worktreeResult.finalWorkspaceHash,
           attribution: 'observed',
         },
       },
@@ -1099,9 +1392,20 @@ export function reconcileActivityEvidence({
   };
 }
 
-function validateObservedWorktreeEvidence(graph, node, owner, result) {
-  if (!owner || !result) return { ok: false, reason: 'observed-worktree-evidence-missing' };
-  if (owner.schema !== 'hybrid-worktree-owner/v1') {
+function validateObservedWorktreeEvidence(
+  graph,
+  node,
+  authorization,
+  owner,
+  result
+) {
+  if (!owner || !result) {
+    return { ok: false, reason: 'observed-worktree-evidence-missing' };
+  }
+  if (!authorization || typeof authorization !== 'object') {
+    return { ok: false, reason: 'recovery-authorization-missing' };
+  }
+  if (owner.schema !== 'hybrid-worktree-owner/v2') {
     return { ok: false, reason: 'worktree-owner-schema-invalid' };
   }
   if (owner.runId !== graph.runId) {
@@ -1115,6 +1419,27 @@ function validateObservedWorktreeEvidence(graph, node, owner, result) {
   }
   if (owner.taskId !== node.id || result.taskId !== node.id) {
     return { ok: false, reason: 'worktree-task-mismatch' };
+  }
+  if (
+    authorization.runId !== graph.runId ||
+    authorization.descriptorHash !== graph.descriptorHash ||
+    authorization.graphRevision !== graph.revisionId ||
+    authorization.taskId !== node.id ||
+    authorization.effectPolicy !== node.effectPolicy
+  ) {
+    return { ok: false, reason: 'recovery-authorization-graph-mismatch' };
+  }
+  if (
+    owner.attemptId !== authorization.attemptId ||
+    result.attemptId !== authorization.attemptId
+  ) {
+    return { ok: false, reason: 'worktree-attempt-mismatch' };
+  }
+  if (
+    owner.leaseId !== authorization.leaseId ||
+    result.leaseId !== authorization.leaseId
+  ) {
+    return { ok: false, reason: 'worktree-lease-mismatch' };
   }
   if (
     result.attribution !== 'observed' ||
@@ -1131,7 +1456,23 @@ function validateObservedWorktreeEvidence(graph, node, owner, result) {
   const allowed = new Set(node.filesModified || []);
   const outside = result.changedFiles.filter((file) => !allowed.has(file));
   if (outside.length) {
-    return { ok: false, reason: 'worktree-result-outside-ownership', outside };
+    return {
+      ok: false,
+      reason: 'worktree-result-outside-ownership',
+      outside,
+    };
+  }
+
+  if (
+    result.integrationStatus !== 'completed' ||
+    typeof result.integrationQueueId !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(result.integrationQueueId) ||
+    typeof result.integratedWorkspaceHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(result.integratedWorkspaceHash) ||
+    typeof result.finalWorkspaceHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(result.finalWorkspaceHash)
+  ) {
+    return { ok: false, reason: 'worktree-integration-required' };
   }
 
   return {
@@ -1140,6 +1481,11 @@ function validateObservedWorktreeEvidence(graph, node, owner, result) {
       patchHash: result.patchHash,
       baseCommit: result.baseCommit,
       changedFiles: [...result.changedFiles],
+      attemptId: result.attemptId,
+      leaseId: result.leaseId,
+      integrationQueueId: result.integrationQueueId,
+      integratedWorkspaceHash: result.integratedWorkspaceHash,
+      finalWorkspaceHash: result.finalWorkspaceHash,
       attribution: 'observed',
     },
   };

@@ -75,6 +75,8 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /Terminal records persist only the sealed graph `descriptorHash` and non-secret `leaseId`/i);
   assert.match(leaseDoc, /validates descriptor hash, lease ID, revision, executable agent node, attempt, and effect policy/i);
   assert.match(leaseDoc, /completion from an older graph revision never marks the current revision complete/i);
+  assert.match(leaseDoc, /`recovered_task_completed` is recovery-only/i);
+  assert.match(leaseDoc, /direct recovered-terminal commit is independently fenced/i);
   assert.match(leaseDoc, /new terminal transition requires the active durable dispatch authorization/i);
   assert.match(leaseDoc, /non-secret `leaseId`/i);
   assert.match(leaseDoc, /lease token and full capability\/task contract are never copied/i);
@@ -107,6 +109,14 @@ test('current-workspace mutation guard documentation matches the enforced owners
     path.join(root, 'core/workspace-guard/index.mjs'),
     'utf8'
   );
+  const worktreeCore = await fs.readFile(
+    path.join(root, 'core/worktree/index.mjs'),
+    'utf8'
+  );
+  const transitionCore = await fs.readFile(
+    path.join(root, 'core/transitions/index.mjs'),
+    'utf8'
+  );
 
   assert.match(guardDoc, /observed_changed_paths ⊆ sealed_task_writes/);
   assert.match(guardDoc, /WRITE_SET_VIOLATION/);
@@ -116,11 +126,24 @@ test('current-workspace mutation guard documentation matches the enforced owners
   assert.match(guardDoc, /task_completed/);
   assert.match(guardDoc, /task_aborted_reconciled/);
   assert.match(guardDoc, /evidence-bound lease release/i);
+  assert.match(guardDoc, /hybrid-worktree-owner\/v2/);
+  assert.match(guardDoc, /observed detached patch is \*\*not\*\* recovered-completion or lease-release authority/i);
+  assert.match(guardDoc, /findCompletedWorktreeIntegration/);
+  assert.match(guardDoc, /worktree-integration-required/);
   assert.match(executeSkill, /Multiple concurrent mutating siblings use worktree isolation/);
+  assert.match(executeSkill, /hybrid-worktree-owner\/v2/);
+  assert.match(executeSkill, /detached patch alone is not completion authority/i);
+  assert.match(executeSkill, /completed durable integration journal/i);
   assert.match(executeSkill, /current-workspace mutation guard/);
   assert.match(executeSkill, /Guard completion alone is not release authority/);
   assert.match(executeSkill, /hybrid lease abort/);
   assert.match(executeSkill, /Terminal transitions are cross-process fenced/);
   assert.match(executeSkill, /never create competing terminal IDs/);
   assert.match(guardCore, /WORKSPACE_GUARD_RECONCILIATION_REQUIRED/);
+  assert.match(worktreeCore, /hybrid-worktree-owner\/v2/);
+  assert.match(worktreeCore, /findCompletedWorktreeIntegration/);
+  assert.match(worktreeCore, /hybrid-worktree-integration-receipt\/v1/);
+  assert.match(transitionCore, /recoverTaskLease/);
+  assert.match(transitionCore, /RECOVERY_INTEGRATION_INVALID/);
+  assert.match(transitionCore, /worktree-integration-required/);
 });
