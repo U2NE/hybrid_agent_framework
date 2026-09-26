@@ -57,6 +57,68 @@ test('run store persists sealed graph and exact initialization replays', async (
   );
 });
 
+test('concurrent identical initial graph binding across stores converges to one durable graph', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const left = new ExecutionRunStore(root, graph.runId);
+  const right = new ExecutionRunStore(root, graph.runId);
+
+  const [first, second] = await Promise.all([
+    left.initializeGraph(graph),
+    right.initializeGraph(graph),
+  ]);
+
+  assert.deepEqual(
+    [first.status, second.status].sort(),
+    ['committed', 'replayed']
+  );
+  assert.equal(
+    (await left.loadGraph()).descriptorHash,
+    graph.descriptorHash
+  );
+  assert.equal(
+    (await left.loadGraphRevision(graph.descriptorHash)).descriptorHash,
+    graph.descriptorHash
+  );
+});
+
+test('concurrent conflicting initial graph binding has one winner and one fenced loser', async () => {
+  const root = await tempProject();
+  const leftGraph = graphFor('reconcile_required');
+  const rightGraph = graphFor('side_effect_free');
+  assert.notEqual(leftGraph.descriptorHash, rightGraph.descriptorHash);
+
+  const left = new ExecutionRunStore(root, leftGraph.runId);
+  const right = new ExecutionRunStore(root, rightGraph.runId);
+  const settled = await Promise.allSettled([
+    left.initializeGraph(leftGraph),
+    right.initializeGraph(rightGraph),
+  ]);
+
+  assert.equal(
+    settled.filter((item) => item.status === 'fulfilled').length,
+    1
+  );
+  const rejected = settled.find((item) => item.status === 'rejected');
+  assert.ok(rejected);
+  assert.equal(rejected.reason.code, 'GRAPH_FENCED');
+
+  const winner = settled.find((item) => item.status === 'fulfilled').value.graph;
+  const persisted = await left.loadGraph();
+  assert.equal(persisted.descriptorHash, winner.descriptorHash);
+
+  const losingGraph =
+    winner.descriptorHash === leftGraph.descriptorHash
+      ? rightGraph
+      : leftGraph;
+  await assert.rejects(
+    () => left.loadGraphRevision(losingGraph.descriptorHash),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'GRAPH_REVISION_MISSING'
+  );
+});
+
 test('graph advancement requires the current descriptor as parent and retains revisions', async () => {
   const root = await tempProject();
   const graph = graphFor();

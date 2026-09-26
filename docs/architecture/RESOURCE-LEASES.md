@@ -84,6 +84,8 @@ The runtime protocol is a graph-revision barrier:
 
 No active authorization is enlarged in place. This preserves the invariant that every dispatch authorization is bound to one immutable descriptor hash.
 
+The **initial run graph binding** is part of the same revision-fenced state machine. `ExecutionRunStore.initializeGraph()` holds the lease-store graph revision fence while checking and publishing `GRAPH.json`, so concurrent identical G1 bindings converge to one commit plus replay, while conflicting descriptors produce one winner and one `GRAPH_FENCED` loser. The losing descriptor revision is not persisted. Initial binding, later graph advancement, and lease acquisition therefore cannot race through separate unfenced write paths.
+
 Identical concurrent extension requests converge on one child descriptor. Different concurrent extensions cannot overwrite each other: the stale request receives `retry-required` and must recompute from the latest graph.
 
 Runtime lease extension may add only semantic `resources`. It rejects caller-controlled `revisionId`, `files_modified`, `writes`, `reads`, `plan`, or `spec`. File-contract changes and product/API/schema/feature-scope/requirement/security semantic changes must go through the material revision approval flow. Material flags on an extension request return `user-approval-required` without mutating the graph.

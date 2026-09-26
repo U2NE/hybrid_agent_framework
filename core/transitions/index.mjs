@@ -61,24 +61,27 @@ export class ExecutionRunStore {
     }
 
     await fs.mkdir(this.runDir, { recursive: true });
-    const existing = await this.loadGraph({ missingOk: true });
-    if (existing) {
-      if (existing.descriptorHash !== graph.descriptorHash) {
-        throw new TransitionError(
-          'run graph is already bound to a different descriptor',
-          'GRAPH_FENCED',
-          {
-            expectedDescriptorHash: existing.descriptorHash,
-            attemptedDescriptorHash: graph.descriptorHash,
-          }
-        );
+    const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+    return leaseStore.withGraphRevisionFence(async () => {
+      const existing = await this.loadGraph({ missingOk: true });
+      if (existing) {
+        if (existing.descriptorHash !== graph.descriptorHash) {
+          throw new TransitionError(
+            'run graph is already bound to a different descriptor',
+            'GRAPH_FENCED',
+            {
+              expectedDescriptorHash: existing.descriptorHash,
+              attemptedDescriptorHash: graph.descriptorHash,
+            }
+          );
+        }
+        return { status: 'replayed', graph: existing, path: this.graphPath };
       }
-      return { status: 'replayed', graph: existing, path: this.graphPath };
-    }
 
-    await this.#persistGraphRevision(graph);
-    await atomicJsonWrite(this.graphPath, graph);
-    return { status: 'committed', graph, path: this.graphPath };
+      await this.#persistGraphRevision(graph);
+      await atomicJsonWrite(this.graphPath, graph);
+      return { status: 'committed', graph, path: this.graphPath };
+    });
   }
 
   async advanceGraph(graph) {

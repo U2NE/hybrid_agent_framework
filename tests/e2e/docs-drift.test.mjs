@@ -72,6 +72,9 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /\.transitions\.lock/);
   assert.match(leaseDoc, /atomic ledger replacement/i);
   assert.match(leaseDoc, /at most one terminal outcome/i);
+  assert.match(leaseDoc, /initial run graph binding/i);
+  assert.match(leaseDoc, /concurrent identical G1 bindings converge/i);
+  assert.match(leaseDoc, /conflicting descriptors produce one winner and one `GRAPH_FENCED` loser/i);
 
   for (const alias of ['.agents/skills/plan/SKILL.md', '.codex/skills/plan/SKILL.md']) {
     const stat = await fs.lstat(path.join(root, alias));

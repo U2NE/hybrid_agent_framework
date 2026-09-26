@@ -69,7 +69,8 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(leaseCore, /export class ResourceLeaseStore/);
   assert.match(leaseCore, /withGraphRevisionFence/);
   assert.match(agents, /active dispatch authorization/);
-  assert.match(agents, /graph advancement and acquisition share the lease-store revision fence/);
+  assert.match(agents, /Initial run graph binding, graph advancement, and lease acquisition share the lease-store revision fence/);
+  assert.match(agents, /concurrent conflicting initial descriptors fail closed with one winner/);
 
   const worktreeCore = await fs.readFile(
     path.join(target, '.hybrid', 'core', 'worktree', 'index.mjs'),
