@@ -23,7 +23,7 @@ The hardening phase started with four verified behavioral checkpoints and then c
 
 ## Browser QA extension
 
-The `browser-qa-hardening` branch extends the merged execution-authority baseline without changing task mutation authority:
+The integrated hardening line combines the provenance/actor-contract hardening with the browser-QA extension without changing task mutation authority:
 
 - `core/browser/index.mjs` adds `hybrid-browser-qa/v1`, browser-lane activation assessment, a Playwright-compatible Chromium provider, explicit browser actions, bounded safe automatic control discovery, screenshot/runtime telemetry, and fail-closed provider availability.
 - `browser-functional-tester` provides acceptance-oriented real-interaction QA; `browser-adversarial-reviewer` provides safe break-it interaction QA. Both remain repository-read-only and have explicit capability/routing/installer surfaces.

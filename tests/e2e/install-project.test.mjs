@@ -222,7 +222,7 @@ test('installed actor artifact producer contract keeps inspected-only paths out 
   assert.match(executeSkill, /actual writes in `modifiedFiles`/i);
   assert.match(executeSkill, /must never place inspected-only paths in legacy `files`/i);
 
-  for (const role of ['tester', 'code-reviewer', 'adversarial-reviewer', 'security-reviewer', 'design-reviewer', 'verifier']) {
+  for (const role of ['tester', 'code-reviewer', 'adversarial-reviewer', 'browser-functional-tester', 'browser-adversarial-reviewer', 'security-reviewer', 'design-reviewer', 'verifier']) {
     const config = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-' + role + '.toml'), 'utf8');
     assert.match(config, /put files you only read or inspect in `inspectedFiles`/i, role);
     assert.match(config, /set `modifiedFiles: \[\]`/i, role);

@@ -1,11 +1,11 @@
 # VERIFICATION — Hardening
 
-Current browser-QA hardening branch: `browser-qa-hardening`, based on merged `main` at `147f1a75ad52c78519edcade20e30aa53dea5f72`.
+Current integration branch: `hardening-integration`, combining the latest `architecture-v2-hardening` and `browser-qa-hardening` histories over `main`.
 
 ## Deterministic
 
 - `npm run check`: PASS.
-- `npm test`: 361/361 PASS at the current browser-QA hardening checkpoint.
+- `npm test`: 365/365 PASS at the current integrated hardening checkpoint.
 - `npm run test:unit`: 125/125 PASS.
 - smoke preflight A/B/C/D: PASS.
 - routing preflight: PASS.

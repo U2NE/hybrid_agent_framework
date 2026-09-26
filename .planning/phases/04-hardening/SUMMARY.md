@@ -12,4 +12,4 @@ Interactive UI quality now has two explicit lanes. Browser Functional QA exercis
 
 Runtime evidence is now broader than the original A/B/C checkpoint. Cases E and F reached authenticated semantic PASS. Cases G and H reached authenticated semantic PASS through the framework-source generic `runQualityClosure()` primitive, so they attest primitive behavior rather than installed-Lead wiring. Case I reached authenticated semantic PASS in a disposable installed project through the installed production primitive. Revised Case J and parallel Case K both reach authenticated semantic PASS for installed decision provenance with explicit Luna/medium requests, worker-owned mutation, installed-core integrity, and clean audits. Genuine user-interactive Case D and independent backend serving-model identity remain intentionally unclaimed.
 
-At the current browser-QA hardening checkpoint, the deterministic regression baseline is `npm test` 361/361 PASS and `npm run test:unit` 125/125 PASS.
+At the current integrated hardening checkpoint, the deterministic regression baseline is `npm test` 365/365 PASS and `npm run test:unit` 125/125 PASS.

@@ -27,7 +27,7 @@ test('repository canonical STATE.md matches the current runtime validation bound
   assert.match(state.nextAction, /Tier 0 Implementer ownership/i);
   assert.match(state.nextAction, /parallel sibling provenance/i);
   assert.match(state.nextAction, /Lead-only central persistence/i);
-  assert.match(state.nextAction, /npm test 361\/361/i);
+  assert.match(state.nextAction, /npm test 365\/365/i);
   assert.match(state.nextAction, /test:unit 125\/125/i);
   assert.deepEqual(state.blockers, [
     'Real Case D has not been exercised because the harness must not invent user responses',

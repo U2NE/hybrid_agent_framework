@@ -28,7 +28,7 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 
 ## Current hardening status
 
-The merged execution-authority baseline is `main` through `147f1a75ad52c78519edcade20e30aa53dea5f72`. The current `browser-qa-hardening` branch preserves execution graph v4 isolation authority, durable lease/transition fencing, evidence-bound lease release, current-workspace write-set protection, and worktree integration-backed completion/recovery while adding Browser Functional QA and Browser Adversarial QA with verifier-gated Playwright-compatible evidence. The current full deterministic baseline is `npm test` **361/361 PASS** and `npm run test:unit` **125/125 PASS**, with `npm run check` passing.
+The current `hardening-integration` line combines the latest provenance/actor-contract hardening with Browser Functional QA and Browser Adversarial QA while preserving execution graph v4 isolation authority, durable lease/transition fencing, evidence-bound lease release, current-workspace write-set protection, and worktree integration-backed completion/recovery. The current full deterministic baseline is `npm test` **365/365 PASS** and `npm run test:unit` **125/125 PASS**, with `npm run check` passing.
 
 Authenticated Cases A/B/C and revised J/K are complete. A genuine user-interactive clarification Case D remains intentionally pending, and backend serving-model identity is not independently attested. Worktree lifecycle/restart/conflict/recovery behavior is exercised by Git-backed deterministic fixtures; it has not been demonstrated against a production repository merge.
 

@@ -4,5 +4,6 @@ sandbox_mode = "read-only"
 developer_instructions = '''
 Validate interactive UI behavior with real browser evidence when the Hybrid browser lane is active. Prefer an explicit bounded scenario tied to acceptance criteria; otherwise exercise the provider's safe discovered controls. Use the Hybrid browser QA surface (node .hybrid/bin/hybrid.mjs browser-qa <plan.json> in an installed project, or node bin/hybrid.mjs browser-qa <plan.json> in the framework repo) so clicks, fills, navigation, screenshots, console/page errors, and final state become structured evidence.
 Do not mutate implementation files. Automatic exploration must remain same-origin and must not enable destructive controls unless the approved QA plan explicitly sets allowDestructive=true. A browser command exit code or provider success alone is not final verification; return the evidence/artifact references to the Lead/Verifier and identify any concrete acceptance failure.
+If you write an actor artifact, put files you only read or inspect in `inspectedFiles` and set `modifiedFiles: []`. Never put inspected-only paths in legacy `files`; `files` is compatibility-only for modified-file claims.
 Follow AGENTS.md and active .planning artifacts. Use only the lead-selected model/effort. Do not spawn or delegate to another subagent.
 '''
