@@ -569,6 +569,7 @@ test('lease release transition is fenced to the exact task attempt and effect po
     attemptId: 'other-attempt',
     kind: 'task_completed',
     effectPolicy: 'reconcile_required',
+    request: { descriptorHash: graph.descriptorHash },
     evidenceRefs: ['test:wrong-attempt'],
   });
   await assert.rejects(
@@ -582,26 +583,29 @@ test('lease release transition is fenced to the exact task attempt and effect po
       error.details.errors.includes('attempt mismatch')
   );
 
-  const wrongPolicy = await runStore.commitTransition({
-    transitionId: 'complete-wrong-policy',
-    graphRevision: graph.revisionId,
-    nodeId: 'task-a',
-    attemptId: 'attempt-bound',
-    kind: 'task_completed',
-    effectPolicy: 'at_most_once',
-    evidenceRefs: ['test:wrong-policy'],
-  });
   await assert.rejects(
-    () => runStore.releaseTaskLease(
-      acquired.authorization,
-      wrongPolicy.record.transitionId
-    ),
+    () => runStore.commitTransition({
+      transitionId: 'complete-wrong-policy',
+      graphRevision: graph.revisionId,
+      nodeId: 'task-a',
+      attemptId: 'attempt-bound',
+      kind: 'task_completed',
+      effectPolicy: 'at_most_once',
+      request: { descriptorHash: graph.descriptorHash },
+      evidenceRefs: ['test:wrong-policy'],
+    }),
     (error) =>
       error instanceof TransitionError &&
-      error.code === 'LEASE_RELEASE_TRANSITION_INVALID' &&
+      error.code === 'TERMINAL_TRANSITION_GRAPH_MISMATCH' &&
       error.details.errors.includes('effectPolicy mismatch')
   );
 
+  assert.equal(
+    (await runStore.loadTransitions()).some(
+      (record) => record.transitionId === 'complete-wrong-policy'
+    ),
+    false
+  );
   assert.equal((await leaseStore.list({ activeOnly: true })).leases.length, 1);
 });
 
@@ -822,6 +826,7 @@ test('concurrent terminal outcomes for one task attempt have exactly one winner'
   await left.initializeGraph(graph);
 
   const common = {
+    descriptorHash: graph.descriptorHash,
     graphRevision: graph.revisionId,
     nodeId: 'task-a',
     attemptId: 'attempt-terminal-race',
@@ -871,6 +876,7 @@ test('persisted duplicate terminal outcomes for one task attempt fail closed on 
   await fs.mkdir(store.runDir, { recursive: true });
 
   const common = {
+    descriptorHash: graph.descriptorHash,
     graphRevision: graph.revisionId,
     nodeId: 'task-a',
     attemptId: 'attempt-corrupt-terminal',
@@ -1060,12 +1066,95 @@ test('unsafe unknown effects stop for reconciliation while idempotent work can r
   assert.equal(idempotent.shouldRedispatch, true);
 });
 
+test('exact terminal replay remains idempotent after the run advances to a child graph', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  const leaseStore = new ResourceLeaseStore(root, graph.runId);
+  await store.initializeGraph(graph);
+  const acquired = await leaseStore.acquire(
+    graph,
+    'task-a',
+    'attempt-replay-after-advance'
+  );
+
+  const input = {
+    transitionId: 'complete-before-advance',
+    graphRevision: graph.revisionId,
+    nodeId: 'task-a',
+    attemptId: acquired.authorization.attemptId,
+    kind: 'task_completed',
+    effectPolicy: acquired.authorization.effectPolicy,
+    request: {
+      descriptorHash: graph.descriptorHash,
+      leaseId: acquired.authorization.leaseId,
+    },
+    evidenceRefs: ['test:complete-before-advance'],
+    result: { outcome: 'pass' },
+  };
+  const committed = await store.commitTransition(input);
+  await store.releaseTaskLease(
+    acquired.authorization,
+    committed.record.transitionId
+  );
+
+  const child = requestLeaseExtension(graph, {
+    taskId: 'task-a',
+    resources: ['contract:after-completion'],
+  }).graph;
+  await store.advanceGraph(child);
+
+  const replay = await store.commitTransition(input);
+  assert.equal(replay.status, 'replayed');
+  assert.equal(
+    replay.record.transitionId,
+    committed.record.transitionId
+  );
+  assert.equal(
+    (await store.loadGraph()).descriptorHash,
+    child.descriptorHash
+  );
+});
+
+test('terminal transition commit rejects a descriptor that is not the current sealed graph', async () => {
+  const root = await tempProject();
+  const graph = graphFor();
+  const store = new ExecutionRunStore(root, graph.runId);
+  await store.initializeGraph(graph);
+
+  await assert.rejects(
+    () => store.commitTransition({
+      transitionId: 'complete-wrong-descriptor',
+      descriptorHash: 'f'.repeat(64),
+      graphRevision: graph.revisionId,
+      nodeId: 'task-a',
+      attemptId: 'attempt-wrong-descriptor',
+      kind: 'task_completed',
+      effectPolicy: 'reconcile_required',
+      evidenceRefs: ['test:wrong-descriptor'],
+      result: { outcome: 'pass' },
+    }),
+    (error) =>
+      error instanceof TransitionError &&
+      error.code === 'TERMINAL_TRANSITION_GRAPH_MISMATCH' &&
+      error.details.errors.includes('descriptorHash mismatch')
+  );
+
+  assert.equal(
+    (await store.loadTransitions()).some(
+      (record) => record.transitionId === 'complete-wrong-descriptor'
+    ),
+    false
+  );
+});
+
 test('an existing completion transition wins over incomplete runtime evidence', () => {
   const graph = graphFor();
   const completed = {
     schema: 'hybrid-transition/v1',
     runId: graph.runId,
     transitionId: 'complete-a',
+    descriptorHash: graph.descriptorHash,
     graphRevision: graph.revisionId,
     nodeId: 'task-a',
     attemptId: 'attempt-1',
@@ -1085,4 +1174,37 @@ test('an existing completion transition wins over incomplete runtime evidence', 
   assert.equal(recovery.status, 'already-completed');
   assert.equal(recovery.shouldRedispatch, false);
   assert.equal(recovery.evidence.transitionId, 'complete-a');
+});
+
+test('completion from an older graph revision cannot satisfy recovery for the current revision', () => {
+  const oldGraph = graphFor();
+  const currentGraph = requestLeaseExtension(oldGraph, {
+    taskId: 'task-a',
+    resources: ['contract:new-revision'],
+  }).graph;
+
+  const oldCompletion = {
+    schema: 'hybrid-transition/v1',
+    runId: oldGraph.runId,
+    transitionId: 'complete-old-revision',
+    descriptorHash: oldGraph.descriptorHash,
+    graphRevision: oldGraph.revisionId,
+    nodeId: 'task-a',
+    attemptId: 'attempt-old',
+    kind: 'task_completed',
+    effectPolicy: 'reconcile_required',
+    requestFingerprint: 'd'.repeat(64),
+    evidenceRefs: ['test:old-revision'],
+    result: { outcome: 'pass' },
+    timestamp: new Date().toISOString(),
+  };
+
+  const recovery = reconcileActivityEvidence({
+    graph: currentGraph,
+    taskId: 'task-a',
+    transitions: [oldCompletion],
+  });
+
+  assert.equal(recovery.status, 'reconcile-required');
+  assert.equal(recovery.shouldRedispatch, false);
 });

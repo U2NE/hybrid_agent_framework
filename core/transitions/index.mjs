@@ -485,6 +485,7 @@ export class ExecutionRunStore {
     for (const record of records) {
       if (!isTerminalTransition(record)) continue;
       const key = JSON.stringify([
+        record.descriptorHash,
         record.graphRevision,
         record.nodeId,
         record.attemptId,
@@ -564,6 +565,48 @@ export class ExecutionRunStore {
     }
 
     await fs.mkdir(this.runDir, { recursive: true });
+
+    if (isTerminalTransition(record)) {
+      const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
+      return leaseStore.withGraphRevisionFence(async () => {
+        const graph = await this.loadGraph();
+        if (
+          record.descriptorHash !== graph.descriptorHash ||
+          record.graphRevision !== graph.revisionId
+        ) {
+          const existing = await this.loadTransitions();
+          const prior = existing.find(
+            (item) => item.transitionId === record.transitionId
+          );
+          if (prior) {
+            if (prior.requestFingerprint !== record.requestFingerprint) {
+              throw new TransitionError(
+                'transition id was reused with a different request fingerprint',
+                'TRANSITION_FENCED',
+                {
+                  transitionId: record.transitionId,
+                  existingFingerprint: prior.requestFingerprint,
+                  attemptedFingerprint: record.requestFingerprint,
+                }
+              );
+            }
+            return {
+              status: 'replayed',
+              record: prior,
+              path: this.transitionsPath,
+            };
+          }
+        }
+
+        validateTerminalTransitionAgainstGraph(record, graph);
+        return this.#commitRecord(record);
+      });
+    }
+
+    return this.#commitRecord(record);
+  }
+
+  async #commitRecord(record) {
     return this.#withTransitionLock(async () => {
       const existing = await this.loadTransitions();
       const prior = existing.find(
@@ -593,6 +636,7 @@ export class ExecutionRunStore {
         const priorTerminal = existing.find(
           (item) =>
             isTerminalTransition(item) &&
+            item.descriptorHash === record.descriptorHash &&
             item.graphRevision === record.graphRevision &&
             item.nodeId === record.nodeId &&
             item.attemptId === record.attemptId
@@ -602,6 +646,7 @@ export class ExecutionRunStore {
             'task attempt already has a different terminal transition',
             'TERMINAL_TRANSITION_FENCED',
             {
+              descriptorHash: record.descriptorHash,
               graphRevision: record.graphRevision,
               nodeId: record.nodeId,
               attemptId: record.attemptId,
@@ -700,9 +745,14 @@ export function buildTransitionRecord(runId, input = {}) {
   const attemptId = safeSegment(input.attemptId ?? 'attempt-1', 'attemptId');
   const kind = requiredString(input.kind, 'kind');
   const evidenceRefs = normalizeStrings(input.evidenceRefs || []);
+  const descriptorHash =
+    input.descriptorHash ??
+    input.request?.descriptorHash ??
+    null;
   const requestFingerprint =
     input.requestFingerprint ||
     transitionRequestFingerprint({
+      descriptorHash,
       graphRevision,
       nodeId,
       attemptId,
@@ -719,6 +769,7 @@ export function buildTransitionRecord(runId, input = {}) {
     nodeId,
     attemptId,
     kind,
+    descriptorHash,
     effectPolicy: input.effectPolicy ?? null,
     requestFingerprint,
     evidenceRefs,
@@ -762,6 +813,9 @@ function validateTransitionForLeaseRelease(transition, authorization) {
   ) {
     errors.push('transition kind is not terminal for lease release');
   }
+  if (transition.descriptorHash !== authorization.descriptorHash) {
+    errors.push('descriptorHash mismatch');
+  }
   if (transition.graphRevision !== authorization.graphRevision) {
     errors.push('graphRevision mismatch');
   }
@@ -801,6 +855,50 @@ function validateTransitionForLeaseRelease(transition, authorization) {
   return true;
 }
 
+function validateTerminalTransitionAgainstGraph(record, graph) {
+  validateSealedExecutionGraph(graph);
+  const errors = [];
+
+  if (record.descriptorHash !== graph.descriptorHash) {
+    errors.push('descriptorHash mismatch');
+  }
+  if (record.graphRevision !== graph.revisionId) {
+    errors.push('graphRevision mismatch');
+  }
+
+  const node = graph.nodes.find(
+    (item) => item.id === record.nodeId && item.kind === 'agent'
+  );
+  if (!node) {
+    errors.push('terminal target is not an executable agent node');
+  } else if (record.effectPolicy !== node.effectPolicy) {
+    errors.push('effectPolicy mismatch');
+  }
+
+  if (
+    record.kind === 'task_aborted_reconciled' &&
+    record.result?.outcome !== 'aborted-reconciled'
+  ) {
+    errors.push('reconciled abort outcome mismatch');
+  }
+
+  if (errors.length) {
+    throw new TransitionError(
+      'terminal transition does not match the current sealed graph: ' +
+        errors.join('; '),
+      'TERMINAL_TRANSITION_GRAPH_MISMATCH',
+      {
+        transitionId: record.transitionId,
+        descriptorHash: record.descriptorHash,
+        graphRevision: record.graphRevision,
+        nodeId: record.nodeId,
+        errors,
+      }
+    );
+  }
+  return true;
+}
+
 export function transitionRequestFingerprint(value) {
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
@@ -824,7 +922,10 @@ export function reconcileActivityEvidence({
   const completed = transitions.find(
     (record) =>
       record?.runId === graph.runId &&
+      record?.descriptorHash === graph.descriptorHash &&
+      record?.graphRevision === graph.revisionId &&
       record?.nodeId === taskId &&
+      record?.effectPolicy === node.effectPolicy &&
       ['task_completed', 'recovered_task_completed'].includes(record?.kind)
   );
   if (completed) {
@@ -959,6 +1060,24 @@ function validateTransitionRecord(record, expectedRunId) {
   }
   if (record?.runId !== expectedRunId) errors.push('runId mismatch');
   if (!Array.isArray(record?.evidenceRefs)) errors.push('invalid evidenceRefs');
+  if (
+    record?.descriptorHash != null &&
+    (
+      typeof record.descriptorHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(record.descriptorHash)
+    )
+  ) {
+    errors.push('invalid descriptorHash');
+  }
+  if (
+    isTerminalTransition(record) &&
+    (
+      typeof record?.descriptorHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(record.descriptorHash)
+    )
+  ) {
+    errors.push('terminal transition missing descriptorHash');
+  }
   if (
     typeof record?.requestFingerprint === 'string' &&
     !/^[0-9a-f]{64}$/.test(record.requestFingerprint)

@@ -503,6 +503,8 @@ async function assertReleaseProofBackedByLedger(runDir, proof, lease) {
       record?.schema !== 'hybrid-transition/v1' ||
       typeof record?.runId !== 'string' ||
       typeof record?.transitionId !== 'string' ||
+      typeof record?.descriptorHash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(record.descriptorHash) ||
       typeof record?.graphRevision !== 'string' ||
       typeof record?.nodeId !== 'string' ||
       typeof record?.attemptId !== 'string' ||
@@ -543,6 +545,9 @@ async function assertReleaseProofBackedByLedger(runDir, proof, lease) {
     errors.push('transition fingerprint mismatch');
   }
   if (matched.runId !== lease.runId) errors.push('runId mismatch');
+  if (matched.descriptorHash !== lease.descriptorHash) {
+    errors.push('descriptorHash mismatch');
+  }
   if (matched.graphRevision !== lease.graphRevision) errors.push('graphRevision mismatch');
   if (matched.nodeId !== lease.taskId) errors.push('task mismatch');
   if (matched.attemptId !== lease.attemptId) errors.push('attempt mismatch');
