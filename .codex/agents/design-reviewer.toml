@@ -4,5 +4,6 @@ sandbox_mode = "read-only"
 developer_instructions = '''
 Review the implemented UI against the approved design contract and existing design system. Check hierarchy, alignment, spacing, typography, component consistency, responsive behavior, state coverage, accessibility, and obvious visual regressions.
 Run deterministic UI/design checks when available and inspect browser or screenshot evidence when the task requires visual proof. Return evidence-backed findings only; do not patch implementation files in the review pass.
+If you write an actor artifact, put files you only read or inspect in `inspectedFiles` and set `modifiedFiles: []`. Never put inspected-only paths in legacy `files`; `files` is compatibility-only for modified-file claims.
 Follow AGENTS.md and active .planning artifacts. Use only the lead-selected model/effort. Do not spawn or delegate to another subagent.
 '''

@@ -228,7 +228,7 @@ function synthetic() {
   ];
   const actorArtifacts = [{
     runId, decisionId: spawn.decisionId, action: 'file_mutation', taskId,
-    agentRunId: logicalAgentRunId, attribution: 'reported', files: ['README.md'], requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium', outcome: 'pass',
+    agentRunId: logicalAgentRunId, attribution: 'reported', inspectedFiles: [], modifiedFiles: ['README.md'], requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium', outcome: 'pass',
   }];
   const decisions = [classification, activation, wave, spawn, verify, completion];
   const audit = auditDecisionTrace({ decisions, events, actorArtifacts, taskOwnership: { [taskId]: ['README.md'] } });
@@ -417,7 +417,7 @@ export async function runDecisionProvenanceRuntimeSmoke(options = {}) {
     'Keep the returned spawn_implementer decision as an object. Never transcribe or retype a decisionId.',
     'Spawn exactly one Implementer using the decision policy model gpt-6-luna and effort medium. The Lead must not edit README.md.',
     'After successful spawn, record the Lead spawn action with createLeadProvenanceSession().writeActionForDecision(spawnDecision,{action:"spawn",attribution:"derived"}).',
-    'The Implementer must edit only README.md and write one reported actor artifact for its own agentRunId including taskId readme, waveId wave-1, and files [README.md]. It must locate the persisted spawn decision programmatically; do not hand-copy its decisionId.',
+    'The Implementer must edit only README.md and write one reported actor artifact for its own agentRunId including taskId readme, waveId wave-1, inspectedFiles [], and modifiedFiles [README.md]. Do not emit a new legacy files field. It must locate the persisted spawn decision programmatically; do not hand-copy its decisionId.',
     'After the Implementer returns, record its completion with writeActionForDecision(spawnDecision,{action:"complete",attribution:"derived",outcome:"pass"}).',
     'Perform deterministic lightweight verification as Lead. Build one review decision named lightweight_verify with intendedAction {type:"lightweight-verify",role:"lead"} and facts.contentMatches=true, write it, then record its action via writeActionForDecision with outcome pass.',
     'Build one completion decision with stage completion, decision complete, intendedAction {type:"completion",role:"lead"}, write it, then record its action via writeActionForDecision with outcome pass.',

@@ -201,6 +201,40 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.equal(routingPolicy.budget_policy.default_max_sol_reservations_per_run, 3);
 });
 
+test('installed actor artifact producer contract keeps inspected-only paths out of legacy files for read-only QA roles', async () => {
+  const target = await fixture();
+  await installProject(target, { skipCodexValidation: true });
+
+  const agents = await fs.readFile(path.join(target, 'AGENTS.md'), 'utf8');
+  assert.match(agents, /`inspectedFiles`/);
+  assert.match(agents, /`modifiedFiles`/);
+  assert.match(agents, /Read-only reviewers\/testers\/verifiers MUST use `modifiedFiles: \[\]`/i);
+  assert.match(agents, /MUST NOT put inspected-only paths in legacy `files`/i);
+  assert.match(agents, /`files` is compatibility-only for older modified-file claims/i);
+
+  const hybridSkill = await fs.readFile(path.join(target, '.agents', 'skills', 'hybrid', 'SKILL.md'), 'utf8');
+  assert.match(hybridSkill, /paths only read\/inspected go in `inspectedFiles`/i);
+  assert.match(hybridSkill, /paths actually changed by that actor go in `modifiedFiles`/i);
+  assert.match(hybridSkill, /MUST NOT copy inspected paths into legacy `files`/i);
+
+  const executeSkill = await fs.readFile(path.join(target, '.agents', 'skills', 'execute', 'SKILL.md'), 'utf8');
+  assert.match(executeSkill, /read-only file observation in `inspectedFiles`/i);
+  assert.match(executeSkill, /actual writes in `modifiedFiles`/i);
+  assert.match(executeSkill, /must never place inspected-only paths in legacy `files`/i);
+
+  for (const role of ['tester', 'code-reviewer', 'adversarial-reviewer', 'security-reviewer', 'design-reviewer', 'verifier']) {
+    const config = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-' + role + '.toml'), 'utf8');
+    assert.match(config, /put files you only read or inspect in `inspectedFiles`/i, role);
+    assert.match(config, /set `modifiedFiles: \[\]`/i, role);
+    assert.match(config, /Never put inspected-only paths in legacy `files`/i, role);
+  }
+
+  const implementer = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-implementer.toml'), 'utf8');
+  assert.match(implementer, /files you only inspected in `inspectedFiles`/i);
+  assert.match(implementer, /only files you actually changed in `modifiedFiles`/i);
+  assert.match(implementer, /Do not emit new `files` claims/i);
+});
+
 test('Codex CLI presence adds config validation while missing auth remains runtime pending', async () => {
   const target = await fixture();
   await installProject(target, { skipCodexValidation: true });

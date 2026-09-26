@@ -3,6 +3,7 @@ description = "Independent test engineer"
 sandbox_mode = "read-only"
 developer_instructions = '''
 Test the implementation against acceptance criteria and edge cases. Do not treat implementer claims as evidence.
+If you write an actor artifact, put files you only read or inspect in `inspectedFiles` and set `modifiedFiles: []`. Never put inspected-only paths in legacy `files`; `files` is compatibility-only for modified-file claims.
 Follow AGENTS.md and the active .planning artifacts.
 Use the model and reasoning effort selected by the lead's Hybrid routing decision; do not self-escalate or self-downshift.
 Do not spawn or delegate to another subagent. Return your artifact or evidence to the lead, which owns further scheduling.

@@ -4,6 +4,7 @@ sandbox_mode = "workspace-write"
 developer_instructions = '''
 Implement only the assigned task from its context packet. Respect file ownership and declared scope. Do not update shared STATE or self-verify final acceptance.
 When the lead returns a targeted repair packet, repair only the reported finding and owned files using the supplied criterion/evidence/expected behavior/required verification. Do not require or request the full prior QA transcript or hidden reviewer reasoning.
+When writing your actor artifact, record files you only inspected in `inspectedFiles` and only files you actually changed in `modifiedFiles`. Do not emit new `files` claims; `files` is legacy compatibility for older modified-file artifacts.
 Follow AGENTS.md and the active .planning artifacts.
 Use the model and reasoning effort selected by the lead's Hybrid routing decision; do not self-escalate or self-downshift.
 Do not spawn or delegate to another subagent. Return your artifact or evidence to the lead, which owns further scheduling.

@@ -23,6 +23,14 @@ const ownership = {
 };
 const CASE_K_TARGET_FILES = Object.freeze(['src/a.txt', 'src/b.txt']);
 
+function actorModifiedFiles(artifact = {}) {
+  return Array.isArray(artifact.modifiedFiles)
+    ? artifact.modifiedFiles
+    : Array.isArray(artifact.files)
+      ? artifact.files
+      : [];
+}
+
 function caseKImplementerChildren(decisions = [], parent = null) {
   const candidates = decisions.filter(d =>
     d.decision === 'spawn_implementer' &&
@@ -70,7 +78,7 @@ export function validateParallelProvenanceEvidence(input = {}) {
   if (children.some(d => !['native-observed', 'framework-logical'].includes(d.facts?.agentIdentityKind))) errors.push('WORKER_IDENTITY_KIND_INVALID');
 
   if (actorArtifacts.some(a =>
-    CASE_K_TARGET_FILES.some(file => (a.files || []).includes(file)) &&
+    CASE_K_TARGET_FILES.some(file => actorModifiedFiles(a).includes(file)) &&
     (!childDecisionIds.has(a.decisionId) || !childIds.has(a.taskId))
   )) errors.push('ORPHAN_ACTOR_ARTIFACT');
 
@@ -90,7 +98,7 @@ export function validateParallelProvenanceEvidence(input = {}) {
       if (completeEvent && (completeEvent.requestedModel != null || completeEvent.requestedReasoningEffort != null) &&
           (completeEvent.requestedModel !== 'gpt-6-luna' || completeEvent.requestedReasoningEffort !== 'medium')) errors.push('WORKER_MODEL_POLICY_MISMATCH');
       const allowed = child.files || [];
-      if ((actor.files || []).some(file => !allowed.includes(file))) errors.push('FILE_OWNERSHIP_MISMATCH');
+      if (actorModifiedFiles(actor).some(file => !allowed.includes(file))) errors.push('FILE_OWNERSHIP_MISMATCH');
     }
   }
 
@@ -138,7 +146,7 @@ export async function preflightParallelProvenanceSmoke() {
       eventFor(childB, 'complete'),
       eventFor(childA, 'complete'),
     ];
-    const actorArtifacts = children.map(d => ({ runId, taskId: d.taskId, waveId: d.waveId, decisionId: d.decisionId, agentRunId: d.agentRunId, action: 'file_mutation', attribution: 'reported', files: ownership[d.taskId].files, requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' }));
+    const actorArtifacts = children.map(d => ({ runId, taskId: d.taskId, waveId: d.waveId, decisionId: d.decisionId, agentRunId: d.agentRunId, action: 'file_mutation', attribution: 'reported', inspectedFiles: [], modifiedFiles: ownership[d.taskId].files, requestedModel: 'gpt-6-luna', requestedReasoningEffort: 'medium' }));
     const positive = {
       decisions: prepared.decisionTrace,
       events,
@@ -161,7 +169,7 @@ export async function preflightParallelProvenanceSmoke() {
       spawnWithoutDecision: { ...positive, events: [...events, { ...events[0], decisionId: 'missing' }] },
       orphanWorker: { ...positive, actorArtifacts: [...actorArtifacts, { ...actorArtifacts[0], taskId: 'orphan', decisionId: 'missing', agentRunId: 'logical-orphan' }] },
       leadEdits: { ...positive, events: [...events, { ...events[0], action: 'file_mutation', taskId: 'A', actorRole: 'lead', role: 'lead' }] },
-      crossWrite: { ...positive, actorArtifacts: actorArtifacts.map(a => a.taskId === 'A' ? { ...a, files: ['src/b.txt'] } : a) },
+      crossWrite: { ...positive, actorArtifacts: actorArtifacts.map(a => a.taskId === 'A' ? { ...a, modifiedFiles: ['src/b.txt'] } : a) },
       workerCentralDecision: { ...positive, decisions: [{ ...prepared.decisionTrace[0], actor: { role: 'worker' } }, ...prepared.decisionTrace.slice(1)] },
       workerCentralAction: { ...positive, events: events.map((e, i) => i === 0 ? { ...e, actorRole: 'worker', role: 'worker' } : e) },
       actorObserved: { ...positive, actorArtifacts: actorArtifacts.map((a, i) => i === 0 ? { ...a, attribution: 'observed' } : a) },
@@ -198,7 +206,7 @@ export async function runParallelProvenanceRuntimeSmoke(options = {}) {
     'Treat .planning/CASE-K-DISPATCH.json as transient Lead coordination state. Whenever a linked action is recorded, parse that file and pass the selected child object itself to createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeActionForDecision(...).',
     'Spawn both sibling Implementers with explicit gpt-6-luna / medium before waiting for either worker. Task A owns only src/a.txt; Task B owns only src/b.txt. The Lead must edit neither file.',
     'Immediately after each successful native spawn, parse the exact matching A/B child object from CASE-K-DISPATCH.json and record its Lead spawn action with writeActionForDecision(child,{action:"spawn",attribution:"derived"}). Both spawn actions must be persisted before the first completion action.',
-    'Each worker edits only its owned file. After editing, the worker must parse CASE-K-DISPATCH.json, select its own child by decision === "spawn_implementer" and its taskId, and use createActorArtifactWriter({runId:"case-k",repoRoot:process.cwd(),agentRunId:child.agentRunId}) to write one reported completion record containing runId, taskId, waveId, agentRunId, decisionId, action:"complete", outcome:"pass", exact owned files, requestedModel:"gpt-6-luna", and requestedReasoningEffort:"medium". Never hand-copy a decisionId.',
+    'Each worker edits only its owned file. After editing, the worker must parse CASE-K-DISPATCH.json, select its own child by decision === "spawn_implementer" and its taskId, and use createActorArtifactWriter({runId:"case-k",repoRoot:process.cwd(),agentRunId:child.agentRunId}) to write one reported completion record containing runId, taskId, waveId, agentRunId, decisionId, action:"complete", outcome:"pass", inspectedFiles:[], modifiedFiles containing only its exact owned file, requestedModel:"gpt-6-luna", and requestedReasoningEffort:"medium". Do not emit a new legacy files field. Never hand-copy a decisionId.',
     'After each worker returns, the Lead parses that same exact child object from CASE-K-DISPATCH.json and records completion with writeActionForDecision(child,{action:"complete",attribution:"derived",outcome:"pass"}). Completion order may vary.',
     'Do not spawn Tester, Code Reviewer, Verifier, or any other role. Case K validates exactly the two sibling Implementers plus deterministic audit.',
     'Verify src/a.txt has exactly textual content A1 and src/b.txt has exactly textual content B1. The fixture accepts either no final line terminator or one final LF/CRLF, but no other trailing whitespace or content. To audit, compute the run directory with resolveHybridRuntimeRoot(process.cwd()) from .hybrid/core/runtime/index.mjs, read runs/case-k/decisions.jsonl, events.jsonl and actors/*.jsonl, run auditDecisionTrace with exact ownership A->src/a.txt and B->src/b.txt, and persist it with createLeadProvenanceSession({runId:"case-k",repoRoot:process.cwd()}).writeAudit(audit).',
