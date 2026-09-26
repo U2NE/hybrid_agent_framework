@@ -1,12 +1,12 @@
 # VERIFICATION — Hardening
 
-Current runtime-code baseline: `architecture-v2-hardening` at `233a831af8863f9f7b42a606c95ef6a86002cdc0`.
+Current browser-QA hardening branch: `browser-qa-hardening`, based on merged `main` at `147f1a75ad52c78519edcade20e30aa53dea5f72`.
 
 ## Deterministic
 
 - `npm run check`: PASS.
-- `npm test`: 352/352 PASS at the current execution-authority hardening checkpoint.
-- `npm run test:unit`: 121/121 PASS.
+- `npm test`: 361/361 PASS at the current browser-QA hardening checkpoint.
+- `npm run test:unit`: 125/125 PASS.
 - smoke preflight A/B/C/D: PASS.
 - routing preflight: PASS.
 - wiki lint: PASS.
@@ -25,6 +25,16 @@ Current runtime-code baseline: `architecture-v2-hardening` at `233a831af8863f9f7
 - `recovered_task_completed` is recovery-only and is rejected for `current-workspace`. `ExecutionRunStore.recoverTaskLease()` revalidates worktree integration evidence before terminal commit and release.
 - Under `current-workspace`, the repository-global mutation guard still fences writes to the sealed write set and treats `WRITE_SET_VIOLATION` / `WORKSPACE_BASE_MOVED` as reconciliation-required; guard completion alone does not authorize lease release.
 
+## Browser QA hardening
+
+- `browser-functional-tester` and `browser-adversarial-reviewer` are separate read-only roles with explicit routing, capabilities, installer registration, and decision-provenance activation records.
+- Interactive UI behavior activates Browser Functional QA; browser-relevant Tier 2/3 and explicit high-regression-risk UI work additionally activates Browser Adversarial QA.
+- `core/browser/index.mjs` provides a bounded Playwright-compatible execution surface for explicit click/fill/navigation/assertion scenarios and safe discovered-control exploration. Adversarial mode adds malformed-input and double-click probes.
+- Automatic exploration is same-origin and skips destructive-looking, submit/reset/file, and cross-origin controls unless destructive interaction is explicitly authorized.
+- `runQualityClosure()` auto-wires browser acquisition for a browser proof gap, but provider success remains raw `kind: browser` evidence until the independent Verifier consumes the exact evidence ID.
+- Missing project-owned `playwright` / `@playwright/test` returns unavailable and keeps the criterion unverified; the framework repository currently has neither package installed, so deterministic tests use an injected Playwright surface rather than claiming a real-browser live demonstration.
+- CLI fail-closed behavior is covered by `hybrid browser-qa`; installer tests verify both browser roles are propagated into target repositories.
+
 ## Authenticated runtime
 
 - Case A: semantic PASS — sibling overlap, exact outputs, flat delegation, verifier.
@@ -39,4 +49,5 @@ Current runtime-code baseline: `architecture-v2-hardening` at `233a831af8863f9f7
 
 - serving model identity is not independently attested;
 - live real-user Case D remains intentionally pending;
-- worktree create/integrate/restart/rollback/recovery behavior is exercised by deterministic Git-backed regression fixtures, but it has not been demonstrated against a production repository merge.
+- worktree create/integrate/restart/rollback/recovery behavior is exercised by deterministic Git-backed regression fixtures, but it has not been demonstrated against a production repository merge;
+- browser QA execution is deterministically validated through an injected Playwright-compatible surface, but this repository does not contain Playwright/browser binaries, so no real application/browser live smoke is claimed here.

@@ -348,6 +348,12 @@ test('installer preserves project-owned ordinary agent files and installs Hybrid
   const installedAdversarialReviewer = await fs.readFile(path.join(dir, 'hybrid-adversarial-reviewer.toml'), 'utf8');
   assert.match(installedAdversarialReviewer, /^name = "hybrid-adversarial-reviewer"$/m);
   assert.match(installedAdversarialReviewer, /^sandbox_mode = "read-only"$/m);
+  const installedBrowserFunctional = await fs.readFile(path.join(dir, 'hybrid-browser-functional-tester.toml'), 'utf8');
+  assert.match(installedBrowserFunctional, /^name = "hybrid-browser-functional-tester"$/m);
+  assert.match(installedBrowserFunctional, /^sandbox_mode = "read-only"$/m);
+  const installedBrowserAdversarial = await fs.readFile(path.join(dir, 'hybrid-browser-adversarial-reviewer.toml'), 'utf8');
+  assert.match(installedBrowserAdversarial, /^name = "hybrid-browser-adversarial-reviewer"$/m);
+  assert.match(installedBrowserAdversarial, /^sandbox_mode = "read-only"$/m);
 });
 
 test('installer refuses to overwrite a pre-existing reserved Hybrid agent file on first install', async () => {

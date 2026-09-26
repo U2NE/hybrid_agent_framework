@@ -29,12 +29,14 @@ test('Codex config registers roles, enables sibling capacity, and leaves model d
   assert.match(config, /^\[agents\."design-executor"\]$/m);
   assert.match(config, /^\[agents\."design-reviewer"\]$/m);
   assert.match(config, /^\[agents\."adversarial-reviewer"\]$/m);
+  assert.match(config, /^\[agents\."browser-functional-tester"\]$/m);
+  assert.match(config, /^\[agents\."browser-adversarial-reviewer"\]$/m);
 });
 
 test('standalone role config layers carry identity, inherit routed model, and forbid recursive delegation', async () => {
   const dir = path.join(root, '.codex', 'agents');
   const entries = (await fs.readdir(dir)).filter((name) => name.endsWith('.toml'));
-  assert.equal(entries.length, 15);
+  assert.equal(entries.length, 17);
 
   for (const entry of entries) {
     const role = entry.replace(/\.toml$/, '');
@@ -117,6 +119,14 @@ test('role name alone never forces architect, plan auditor, or security reviewer
   const adversarial = resolveRoleRouting('adversarial-reviewer');
   assert.equal(adversarial.routeLevel, 'luna_high');
   assert.equal(adversarial.modelTier, 'luna');
+
+  const browserFunctional = resolveRoleRouting('browser-functional-tester');
+  assert.equal(browserFunctional.routeLevel, 'luna_medium');
+  assert.equal(browserFunctional.modelTier, 'luna');
+
+  const browserAdversarial = resolveRoleRouting('browser-adversarial-reviewer');
+  assert.equal(browserAdversarial.routeLevel, 'luna_high');
+  assert.equal(browserAdversarial.modelTier, 'luna');
 });
 
 test('architecture and security reasoning escalate by difficulty, not role name', () => {

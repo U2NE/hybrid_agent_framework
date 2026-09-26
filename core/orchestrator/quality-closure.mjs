@@ -2,6 +2,7 @@ import { buildDecision, createDecisionWriter } from '../provenance/index.mjs';
 import { buildWorkerContextWithCache } from '../context/index.mjs';
 import { createOrchestrationEventWriter } from '../observability/index.mjs';
 import { acquireProofGaps, mergeAcquiredEvidence } from '../qe/index.mjs';
+import { createBrowserQaProvider } from '../browser/index.mjs';
 import { runRepairConvergence, shouldTriggerRepair } from '../repair/index.mjs';
 import {
   assessEvidence,
@@ -241,10 +242,21 @@ export async function runQualityClosure(options = {}) {
       sharedContext: contextBundle.sharedSnapshot?.shared || null,
     });
   } else {
-    acquisitions = await acquireProofGaps(acquisitionGaps, {
+    const proofOptions = {
       ...(options.proofOptions || {}),
       cwd: options.proofOptions?.cwd || repoRoot,
-    });
+    };
+    if (
+      acquisitionGaps.some((gap) => gap.requiredKind === 'browser') &&
+      proofOptions.browserProvider !== false &&
+      typeof proofOptions.browserProvider !== 'function'
+    ) {
+      proofOptions.browserProvider = createBrowserQaProvider({
+        ...(options.browserQa || {}),
+        cwd: proofOptions.cwd,
+      });
+    }
+    acquisitions = await acquireProofGaps(acquisitionGaps, proofOptions);
   }
   acquisitions = Array.isArray(acquisitions) ? acquisitions : [];
 

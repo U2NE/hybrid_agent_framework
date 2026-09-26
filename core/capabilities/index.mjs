@@ -8,6 +8,8 @@ export const ROLE_CAPABILITY_POLICY = Object.freeze({
   tester: readOnlyPolicy(['fs.read', 'process.test', 'review.return']),
   'code-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'review.return']),
   'adversarial-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'review.return']),
+  'browser-functional-tester': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'ui.inspect', 'browser.interact', 'review.return']),
+  'browser-adversarial-reviewer': readOnlyPolicy(['fs.read', 'code.search', 'process.test', 'ui.inspect', 'browser.interact', 'review.return']),
   'security-reviewer': readOnlyPolicy([
     'fs.read',
     'code.search',

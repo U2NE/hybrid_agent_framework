@@ -57,6 +57,14 @@ config_file = "agents/code-reviewer.toml"
 description = "Independent adversarial break-it reviewer"
 config_file = "agents/adversarial-reviewer.toml"
 
+[agents."browser-functional-tester"]
+description = "Independent browser functional QA tester"
+config_file = "agents/browser-functional-tester.toml"
+
+[agents."browser-adversarial-reviewer"]
+description = "Independent adversarial browser break-it QA reviewer"
+config_file = "agents/browser-adversarial-reviewer.toml"
+
 [agents."security-reviewer"]
 description = "Conditional security reviewer"
 config_file = "agents/security-reviewer.toml"

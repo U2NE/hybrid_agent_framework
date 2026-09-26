@@ -4,7 +4,7 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 
 ## Pipeline
 
-`classify → clarify/specify when needed → research → plan → [architect/audit for complex work] → dependency-aware execute → test → review → conditional security → verify/fix → integrate → full test → docs/wiki`
+`classify → clarify/specify when needed → research → plan → [architect/audit for complex work] → dependency-aware execute → test → review → conditional browser functional/adversarial QA → conditional security → verify/fix → integrate → full test → docs/wiki`
 
 ## Core invariants
 
@@ -14,6 +14,9 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 - One writer per file per execution wave.
 - Implementers cannot final-verify their own work.
 - Security review is conditional.
+- Interactive UI behavior can activate read-only Browser Functional QA; browser-relevant Tier 2/3 or high-regression-risk UI work can additionally activate Browser Adversarial QA.
+- Browser QA uses a bounded Playwright-compatible provider for real click/fill/navigation evidence, remains same-origin/non-destructive by default, and cannot final-verify itself; exact browser evidence must be reassessed by the Verifier.
+- Required browser proof fails closed when the target project does not provide `playwright` or `@playwright/test` plus its browser runtime.
 - Verify/fix stops after 3 failed iterations.
 - State uses `hybrid-state/v1` and unsupported/corrupt state fails closed.
 - Model routing is stage-local and Luna-first: medium/high/xhigh/max are used before Sol escalation, and later routine stages downshift independently.
@@ -25,7 +28,7 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 
 ## Current hardening status
 
-The current `architecture-v2-hardening` runtime-code baseline is `233a831af8863f9f7b42a606c95ef6a86002cdc0`. Execution graph v4 isolation authority, durable lease/transition fencing, evidence-bound lease release, current-workspace write-set protection, and worktree integration-backed completion/recovery are implemented and regression-tested. The current full deterministic baseline is `npm test` **352/352 PASS** and `npm run test:unit` **121/121 PASS**, with `npm run check` passing.
+The merged execution-authority baseline is `main` through `147f1a75ad52c78519edcade20e30aa53dea5f72`. The current `browser-qa-hardening` branch preserves execution graph v4 isolation authority, durable lease/transition fencing, evidence-bound lease release, current-workspace write-set protection, and worktree integration-backed completion/recovery while adding Browser Functional QA and Browser Adversarial QA with verifier-gated Playwright-compatible evidence. The current full deterministic baseline is `npm test` **361/361 PASS** and `npm run test:unit` **125/125 PASS**, with `npm run check` passing.
 
 Authenticated Cases A/B/C and revised J/K are complete. A genuine user-interactive clarification Case D remains intentionally pending, and backend serving-model identity is not independently attested. Worktree lifecycle/restart/conflict/recovery behavior is exercised by Git-backed deterministic fixtures; it has not been demonstrated against a production repository merge.
 
@@ -81,8 +84,8 @@ Installation into a target repository copies the canonical skill snapshots into 
 
 ## Codex runtime status
 
-Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, installer behavior, execution graph v4 sealing, durable lease/dispatch authority, terminal transition fencing, current-workspace mutation guarding, and worktree integration/recovery validation.
+Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, installer behavior, execution graph v4 sealing, durable lease/dispatch authority, terminal transition fencing, current-workspace mutation guarding, worktree integration/recovery validation, browser-lane activation/routing/capabilities, bounded Playwright-compatible interaction, installer propagation, CLI fail-closed behavior, and verifier-gated browser evidence.
 
 Historical authenticated runtime validation covered A/B/C functional cases, sibling parallelism, same-file serialization, quality-lane handoffs, Luna effort overrides, and the then-current rejected-model → session-inheritance retry. That fallback evidence is superseded by the explicit-model fail-closed policy; current deterministic validation rejects unapproved or model-less inference before subprocess spawn. Revised authenticated Case J now passes the Implementer-owned Tier 0 provenance contract with explicit Luna/medium routing and a clean audit. Authenticated Case K passes one parallel wave with two independently owned Implementer children, both spawn records before the first completion, explicit Luna/medium worker routes, reported actor artifacts, exact file ownership, and a clean audit. A genuine user-interactive clarification Case D remains pending by design; explicit request acceptance is observed, but backend serving-model identity is not independently attested.
 
-Prepared functional cases are implemented by `scripts/runtime-smoke.mjs`. See `docs/architecture/RUNTIME-SMOKE.md` and `docs/RUNTIME-VALIDATION.md`.
+Prepared functional cases are implemented by `scripts/runtime-smoke.mjs`. Browser QA is implemented by `core/browser/index.mjs`; see `docs/architecture/BROWSER-QA.md` for its role, safety, CLI, Playwright availability, and evidence-authority contract. The framework repository itself currently has no Playwright package/browser runtime, so browser QA is deterministically validated with an injected compatible surface rather than claimed as a real-browser live smoke. See `docs/architecture/RUNTIME-SMOKE.md` and `docs/RUNTIME-VALIDATION.md` for the existing authenticated runtime cases.

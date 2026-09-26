@@ -21,6 +21,16 @@ The hardening phase started with four verified behavioral checkpoints and then c
 - `233a831` — `hybrid-exec-graph/v4` seals deterministic `isolationMode` and propagates it through lease/task-contract/dispatch authority; ordinary worktree completion is fenced by the same integration evidence as recovered completion.
 - `01e83e2` — durable state/verification/README documentation synchronized to the v4 authority boundary.
 
+## Browser QA extension
+
+The `browser-qa-hardening` branch extends the merged execution-authority baseline without changing task mutation authority:
+
+- `core/browser/index.mjs` adds `hybrid-browser-qa/v1`, browser-lane activation assessment, a Playwright-compatible Chromium provider, explicit browser actions, bounded safe automatic control discovery, screenshot/runtime telemetry, and fail-closed provider availability.
+- `browser-functional-tester` provides acceptance-oriented real-interaction QA; `browser-adversarial-reviewer` provides safe break-it interaction QA. Both remain repository-read-only and have explicit capability/routing/installer surfaces.
+- Adversarial browser discovery adds repeated/double-click and malformed-input probes while keeping same-origin and non-destructive defaults. Destructive-looking controls require explicit `allowDestructive: true` authorization.
+- `runQualityClosure()` auto-wires the browser provider only for browser proof gaps. Browser success remains raw evidence until the independent Verifier consumes the exact `evidenceId`.
+- `hybrid browser-qa` exposes the provider to installed/runtime workflows. Missing target URL or Playwright availability fails closed with structured output.
+
 ## Current authority path
 
 `explicit user approval -> sealed graph v4 -> deterministic isolation -> durable lease -> dispatch authorization -> guarded mutation/worktree integration -> durable terminal transition -> evidence-bound lease release`
@@ -34,6 +44,7 @@ For worktree execution, ownership and integration records carry task `attemptId`
 - I: authenticated semantic PASS through an installed Lead invoking the installed production primitive.
 - J: authenticated revised Tier 0 decision-provenance PASS with Implementer-owned mutation and a clean audit.
 - K: authenticated parallel decision-provenance PASS with one parallel parent, two Implementer children, disjoint ownership, and a clean audit.
+- Browser QA: deterministic activation/provider/CLI/installer/evidence-gate coverage PASS; no real-browser live smoke is claimed because this repository does not contain Playwright/browser binaries.
 - D: deterministic fixture verified, but real user-interactive execution remains intentionally pending.
 - Backend serving-model identity is not independently attested; evidence establishes accepted explicit model/effort requests only.
 

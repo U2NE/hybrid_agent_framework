@@ -238,6 +238,91 @@ test('generic proof-gap path acquires raw proof then requires verifier assessmen
   assert.equal(result.evidence[0].evidenceId, acquiredId);
 });
 
+test('browser proof gap auto-wires built-in provider and still requires verifier reassessment', async () => {
+  let verifierCalls = 0;
+  const browserPage = {
+    on() {},
+    async goto() {},
+    locator(selector) {
+      return {
+        first() { return this; },
+        async click() {},
+        async textContent() { return selector === '#status' ? 'saved' : ''; },
+      };
+    },
+    async screenshot() {},
+    async title() { return 'Browser fixture'; },
+    url() { return 'http://example.test/app'; },
+    async close() {},
+  };
+  const playwright = {
+    chromium: {
+      async launch() {
+        return {
+          async newContext() {
+            return { async newPage() { return browserPage; }, async close() {} };
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  const result = await runQualityClosure({
+    snapshot: 'R1',
+    tier: 1,
+    task: task(['Saving through the UI shows saved']),
+    requiredProofByCriterion: { 'AC-001': 'browser' },
+    proofRequests: {
+      'AC-001': {
+        requiredKind: 'browser',
+        url: 'http://example.test/app',
+        browserMode: 'functional',
+        actions: [
+          { type: 'click', selector: '#save' },
+          { type: 'expect-text', selector: '#status', value: 'saved' },
+        ],
+      },
+    },
+    browserQa: { playwright },
+    qa: async () => ({ ok: true, findings: [] }),
+    verifier: async ({ phase, evidence }) => {
+      verifierCalls += 1;
+      if (phase === 'verification') {
+        return {
+          ok: false,
+          verdict: 'FAIL',
+          reason: 'PROOF_GAP',
+          report: report(['Saving through the UI shows saved']),
+        };
+      }
+      assert.equal(evidence.length, 1);
+      assert.equal(evidence[0].kind, 'browser');
+      assert.equal(evidence[0].acquired, true);
+      assert.equal(evidence[0].assessed, false);
+      return {
+        ok: true,
+        verdict: 'PASS',
+        reason: 'VERIFIED',
+        report: report(['Saving through the UI shows saved']),
+        assessments: [{
+          criterionId: 'AC-001',
+          kind: 'browser',
+          evidenceIds: [evidence[0].evidenceId],
+          verified: true,
+          verifier: 'verifier',
+        }],
+      };
+    },
+    appendRuntimeEvent: async () => ({ ok: true }),
+  });
+
+  assert.equal(result.pass, true);
+  assert.equal(verifierCalls, 2);
+  assert.equal(result.evidence[0].source, 'hybrid-playwright-browser-provider');
+  assert.equal(result.evidence[0].verified, true);
+});
+
 test('raw proof success with wrong semantic content cannot complete even when command exits zero', async () => {
   let rawEvidence = null;
 
