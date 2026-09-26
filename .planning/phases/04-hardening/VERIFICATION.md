@@ -1,6 +1,6 @@
 # VERIFICATION — Hardening
 
-Current integration branch: `hardening-integration`, combining the latest `architecture-v2-hardening` and `browser-qa-hardening` histories over `main`.
+Current integrated/main hardening baseline, combining the latest `architecture-v2-hardening` and `browser-qa-hardening` histories over `main`.
 
 ## Deterministic
 
