@@ -17,6 +17,17 @@ Codex-first autonomous development framework combining a thin GSD-style executio
 - Verify/fix stops after 3 failed iterations.
 - State uses `hybrid-state/v1` and unsupported/corrupt state fails closed.
 - Model routing is stage-local and Luna-first: medium/high/xhigh/max are used before Sol escalation, and later routine stages downshift independently.
+- Approved execution is sealed as `hybrid-exec-graph/v4`; each executable task carries the scheduler-selected `current-workspace` or `worktree` isolation mode as part of its authority.
+- Mutating execution requires a durable task lease before spawn. The lease, task contract, and dispatch authorization must retain the same descriptor/revision/task/attempt/capability/effect/isolation binding.
+- New terminal outcomes require the exact active dispatch authorization and durable lease; competing terminal outcomes for one task attempt fail closed, and lease release requires a persisted evidence-bearing terminal transition.
+- Worktree success is integration-backed: both `task_completed` and `recovered_task_completed` require completed durable integration evidence that still matches the main workspace. A detached patch or worker return alone is not completion authority.
+- `recovered_task_completed` is worktree recovery-only. Current-workspace mutations use the repository-global mutation guard, and guard completion alone is not lease-release authority.
+
+## Current hardening status
+
+The current `architecture-v2-hardening` runtime-code baseline is `233a831af8863f9f7b42a606c95ef6a86002cdc0`. Execution graph v4 isolation authority, durable lease/transition fencing, evidence-bound lease release, current-workspace write-set protection, and worktree integration-backed completion/recovery are implemented and regression-tested. The current full deterministic baseline is `npm test` **352/352 PASS** and `npm run test:unit` **121/121 PASS**, with `npm run check` passing.
+
+Authenticated Cases A/B/C and revised J/K are complete. A genuine user-interactive clarification Case D remains intentionally pending, and backend serving-model identity is not independently attested. Worktree lifecycle/restart/conflict/recovery behavior is exercised by Git-backed deterministic fixtures; it has not been demonstrated against a production repository merge.
 
 ## Model routing
 
@@ -37,6 +48,7 @@ See `docs/architecture/MODEL-ROUTING.md`.
 ```bash
 npm run check
 npm test
+npm run test:unit
 node bin/hybrid.mjs classify "fix typo"
 node bin/hybrid.mjs wiki lint .ai/wiki
 node bin/hybrid.mjs state get .
@@ -69,7 +81,7 @@ Installation into a target repository copies the canonical skill snapshots into 
 
 ## Codex runtime status
 
-Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, and installer behavior.
+Static/runtime-independent validation is complete for config schema, agent registration, skills, routing decisions, scheduler, state, wiki, verification, security triggers, installer behavior, execution graph v4 sealing, durable lease/dispatch authority, terminal transition fencing, current-workspace mutation guarding, and worktree integration/recovery validation.
 
 Historical authenticated runtime validation covered A/B/C functional cases, sibling parallelism, same-file serialization, quality-lane handoffs, Luna effort overrides, and the then-current rejected-model → session-inheritance retry. That fallback evidence is superseded by the explicit-model fail-closed policy; current deterministic validation rejects unapproved or model-less inference before subprocess spawn. Revised authenticated Case J now passes the Implementer-owned Tier 0 provenance contract with explicit Luna/medium routing and a clean audit. Authenticated Case K passes one parallel wave with two independently owned Implementer children, both spawn records before the first completion, explicit Luna/medium worker routes, reported actor artifacts, exact file ownership, and a clean audit. A genuine user-interactive clarification Case D remains pending by design; explicit request acceptance is observed, but backend serving-model identity is not independently attested.
 
