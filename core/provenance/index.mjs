@@ -84,6 +84,7 @@ export function createActorArtifactWriter(options = {}) {
   const file = path.join(runDirectory(options), 'actors', agentRunId + '.jsonl');
   return async record => {
     if (record.agentRunId !== agentRunId || record.runId !== options.runId || record.schema === DECISION_SCHEMA || record.decision || record.intendedAction) throw new TypeError('actor writer cannot write central decisions or another actor');
+    if (!actorFileContract(record).ok) throw new TypeError('invalid actor file contract');
     // A worker's self-report cannot attest observed attribution.
     return write(file, { ...record, attribution: 'reported' }, options);
   };
@@ -97,6 +98,10 @@ export function actionForDecision(decision, input = {}) {
   if (!validateDecision(decision).ok) throw new TypeError('valid decision required for linked action');
   const action = input.action || decision.intendedAction?.type;
   if (!action) throw new TypeError('linked action type required');
+  const snapshot = decision.snapshot ?? null;
+  const targetRole = decision.intendedAction?.role ?? null;
+  assertExactLinkedOverride(input, 'snapshot', snapshot);
+  assertExactLinkedOverride(input, 'targetRole', targetRole);
   return {
     ...input,
     runId: decision.runId,
@@ -106,14 +111,22 @@ export function actionForDecision(decision, input = {}) {
     taskId: decision.taskId,
     waveId: decision.waveId,
     agentRunId: decision.agentRunId,
+    snapshot,
     files: input.files || decision.files || [],
-    targetRole: input.targetRole ?? decision.intendedAction?.role ?? null,
+    targetRole,
     requestedModel: input.requestedModel ?? decision.facts?.requestedModel ?? null,
     requestedReasoningEffort: input.requestedReasoningEffort ?? decision.facts?.requestedReasoningEffort ?? null,
     attribution: input.attribution || 'derived',
     actorRole: 'lead',
     role: 'lead',
   };
+}
+
+function assertExactLinkedOverride(input, key, expected) {
+  if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+  if (canonical(input[key] ?? null) !== canonical(expected ?? null)) {
+    throw new TypeError('linked action ' + key + ' override mismatch');
+  }
 }
 
 export function createLeadProvenanceSession(options = {}) {
@@ -173,12 +186,37 @@ export function auditDecisionTrace({ decisions = [], events = [], actorArtifacts
     if (!d) { add('MISSING_DECISION', a); continue; }
     const owner = taskOwnership[a.taskId] || {};
     const files = owner.files_modified || owner.files || d?.files;
-    if (files && (a.files || []).some(file => !files.includes(file))) add('FILE_OWNERSHIP_MISMATCH', a);
+    const actorFiles = actorFileContract(a);
+    if (!actorFiles.ok) add('DECISION_ACTION_MISMATCH', a);
+    if (files && actorFiles.modifiedFiles.some(file => !files.includes(file))) add('FILE_OWNERSHIP_MISMATCH', a);
     if (d?.agentRunId && a.agentRunId !== d.agentRunId) add('ROLE_OWNERSHIP_MISMATCH', a);
   }
   findings.sort((a, b) => canonical(a).localeCompare(canonical(b)));
   return { schema: 'hybrid-decision-audit/v1', ok: !findings.length, findings };
 }
+function actorFileContract(artifact = {}) {
+  const modifiedCamel = artifact.modifiedFiles;
+  const modifiedSnake = artifact.files_modified;
+  const inspectedCamel = artifact.inspectedFiles;
+  const inspectedSnake = artifact.files_inspected;
+  const legacyFiles = artifact.files;
+  const explicitModified = modifiedCamel ?? modifiedSnake;
+  const explicitInspected = inspectedCamel ?? inspectedSnake;
+  const modifiedFiles = explicitModified !== undefined ? explicitModified : (legacyFiles ?? []);
+  const inspectedFiles = explicitInspected ?? [];
+  const validList = value => Array.isArray(value) && value.every(file => typeof file === 'string' && file.length > 0);
+  const sameList = (left, right) => left === undefined || right === undefined || canonical(left) === canonical(right);
+  const aliasesAgree =
+    sameList(modifiedCamel, modifiedSnake) &&
+    sameList(inspectedCamel, inspectedSnake) &&
+    (explicitModified === undefined || legacyFiles === undefined || canonical(explicitModified) === canonical(legacyFiles));
+  return {
+    ok: aliasesAgree && validList(modifiedFiles) && validList(inspectedFiles),
+    modifiedFiles: validList(modifiedFiles) ? modifiedFiles : [],
+    inspectedFiles: validList(inspectedFiles) ? inspectedFiles : [],
+  };
+}
+
 function matches(d, e) {
   const action = d.intendedAction;
   return e.decisionId === d.decisionId && e.runId === d.runId && (!action ? !e.action : e.action === action.type && (!action.role || eventRole(e) === action.role)) && ['taskId', 'waveId', 'agentRunId'].every(key => d[key] == null || d[key] === e[key]);

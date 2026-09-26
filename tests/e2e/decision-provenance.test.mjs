@@ -32,9 +32,22 @@ test('Lead central writer, scoped worker artifacts, storage failure and strict',
     const worker = createActorArtifactWriter({ ...options, agentRunId: 'a' });
     await assert.rejects(worker({ runId: 'r', agentRunId: 'b' }));
     await assert.rejects(worker(decision()));
-    await worker({ runId: 'r', agentRunId: 'a', attribution: 'observed', action: 'mutation' });
+    await worker({
+      runId: 'r',
+      agentRunId: 'a',
+      attribution: 'observed',
+      action: 'review',
+      inspectedFiles: ['src/context.js'],
+      modifiedFiles: [],
+    });
+    await assert.rejects(
+      worker({ runId: 'r', agentRunId: 'a', files: ['src/a.js'], modifiedFiles: [], inspectedFiles: [] }),
+      /invalid actor file contract/
+    );
     const artifact = JSON.parse(await fs.readFile(path.join(root, 'runs/r/actors/a.jsonl')));
     assert.equal(artifact.attribution, 'reported');
+    assert.deepEqual(artifact.inspectedFiles, ['src/context.js']);
+    assert.deepEqual(artifact.modifiedFiles, []);
     const blocked = path.join(root, 'file'); await fs.writeFile(blocked, 'x');
     assert.equal((await createDecisionWriter({ ...options, runtimeRoot: blocked, role: 'lead' })(decision())).ok, false);
     await assert.rejects(createDecisionWriter({ ...options, runtimeRoot: blocked, role: 'lead', strict: true })(decision()));
@@ -59,6 +72,65 @@ test('linked action helper binds exact decision identity and routed model metada
   assert.equal(event.targetRole, 'implementer');
   assert.equal(event.requestedModel, 'gpt-6-luna');
   assert.equal(event.requestedReasoningEffort, 'medium');
+});
+
+test('linked action inherits the decision snapshot and rejects a conflicting snapshot override', () => {
+  const d = decision({ snapshot: 'snapshot-42' });
+  assert.equal(actionForDecision(d, { attribution: 'derived' }).snapshot, 'snapshot-42');
+  assert.equal(actionForDecision(d, { snapshot: 'snapshot-42', attribution: 'derived' }).snapshot, 'snapshot-42');
+  assert.throws(
+    () => actionForDecision(d, { snapshot: 'snapshot-other', attribution: 'derived' }),
+    /linked action snapshot override mismatch/
+  );
+});
+
+test('linked action targetRole is fixed to intendedAction role and rejects a conflicting override', () => {
+  const d = decision({ intendedAction: { type: 'spawn', role: 'tester' } });
+  assert.equal(actionForDecision(d, { attribution: 'derived' }).targetRole, 'tester');
+  assert.equal(actionForDecision(d, { targetRole: 'tester', attribution: 'derived' }).targetRole, 'tester');
+  assert.throws(
+    () => actionForDecision(d, { targetRole: 'implementer', attribution: 'derived' }),
+    /linked action targetRole override mismatch/
+  );
+});
+
+test('read-only actor artifacts separate inspected files from modified files for ownership audit', () => {
+  for (const role of ['tester', 'code-reviewer']) {
+    const d = decision({
+      decision: 'review_' + role,
+      intendedAction: { type: 'review', role, expectsEvent: false },
+      files: ['src/owned.js'],
+    });
+    const inspectedOnly = {
+      runId: 'r',
+      taskId: 'A',
+      decisionId: d.decisionId,
+      agentRunId: 'a',
+      action: 'review',
+      attribution: 'reported',
+      inspectedFiles: ['src/owned.js', 'src/read-only-context.js'],
+      modifiedFiles: [],
+    };
+    const clean = auditDecisionTrace({
+      decisions: [d],
+      actorArtifacts: [inspectedOnly],
+      taskOwnership: { A: { owner: 'implementer', files_modified: ['src/owned.js'] } },
+    });
+    assert.equal(codes(clean).includes('FILE_OWNERSHIP_MISMATCH'), false, role);
+
+    const crossWrite = auditDecisionTrace({
+      decisions: [d],
+      actorArtifacts: [{ ...inspectedOnly, modifiedFiles: ['src/read-only-context.js'] }],
+      taskOwnership: { A: { owner: 'implementer', files_modified: ['src/owned.js'] } },
+    });
+    assert.ok(codes(crossWrite).includes('FILE_OWNERSHIP_MISMATCH'), role);
+  }
+
+  const legacy = decision({ intendedAction: { type: 'review', role: 'tester', expectsEvent: false }, files: ['src/owned.js'] });
+  assert.ok(codes(auditDecisionTrace({
+    decisions: [legacy],
+    actorArtifacts: [{ decisionId: legacy.decisionId, agentRunId: 'a', attribution: 'reported', files: ['src/outside.js'] }],
+  })).includes('FILE_OWNERSHIP_MISMATCH'));
 });
 
 test('Lead lightweight verification is compatible with implementer task ownership', () => {
