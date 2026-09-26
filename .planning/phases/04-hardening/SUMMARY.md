@@ -1,7 +1,13 @@
 # SUMMARY — Hardening
 
-Hybrid now uses a Luna-first reasoning ladder, tier-aware minimal pipelines, evidence-based classification, namespace-safe installation, fresh-context reduction, conditional worktree isolation, bounded planning consensus, stronger review/security/verifier protocols, acceptance traceability, applicability-aware edge probes, ontology convergence, and semantic runtime smoke validation.
+Hybrid now combines its Luna-first reasoning ladder and tier-aware minimal pipeline with durable execution authority. Approved work is sealed into `hybrid-exec-graph/v4`; deterministic scheduler isolation is part of each executable task descriptor; role capability grants, durable leases, task contracts, and dispatch authorization preserve the same execution contract.
 
-The framework kept its canonical Node implementation, flat lead-owned dispatch, hybrid-state/v1 state, .planning source of truth, and conditional Sol escalation.
+Graph publication and lease acquisition are revision-fenced. New terminal outcomes require the exact active durable dispatch authority, conflicting terminal results for one task attempt are fenced, and lease release is backed by a persisted evidence-bearing terminal transition. Current-workspace mutations remain behind the repository-global write/base guard.
 
-Authenticated A/B/C runtime behavior and invalid-model fallback are now verified. Only genuine user-interactive Case D and independent backend model attestation remain intentionally unclaimed.
+Worktree execution now carries `hybrid-worktree-owner/v2` ownership identity and a durable `hybrid-worktree-integration/v1` queue. Queue identity and applied records bind the task handoff to `attemptId` and non-secret `leaseId` in addition to run/revision/graph/base/patch identity. Successful worktree completion—ordinary or recovered—requires completed integration evidence for the exact task attempt/lease and revalidates both repository HEAD and the final workspace hash. A detached patch or worker return alone is not completion authority, and recovered completion is invalid for current-workspace execution.
+
+The framework kept its canonical Node implementation, flat Lead-owned dispatch, `hybrid-state/v1` state, `.planning/` source of truth, bounded quality loops, and conditional Sol escalation.
+
+Runtime evidence is now broader than the original A/B/C checkpoint. Cases E and F reached authenticated semantic PASS. Cases G and H reached authenticated semantic PASS through the framework-source generic `runQualityClosure()` primitive, so they attest primitive behavior rather than installed-Lead wiring. Case I reached authenticated semantic PASS in a disposable installed project through the installed production primitive. Revised Case J and parallel Case K both reach authenticated semantic PASS for installed decision provenance with explicit Luna/medium requests, worker-owned mutation, installed-core integrity, and clean audits. Genuine user-interactive Case D and independent backend serving-model identity remain intentionally unclaimed.
+
+At the current execution-authority checkpoint, the deterministic regression baseline is `npm test` 352/352 PASS and `npm run test:unit` 121/121 PASS.
