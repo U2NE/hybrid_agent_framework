@@ -94,6 +94,7 @@ test('workspace-guard CLI enforces begin -> observed completion -> lease release
   assert.equal(inactive.active, false);
 
   const terminal = await runStore.commitTransition({
+    authorization: acquired.authorization,
     transitionId: 'complete-A-attempt-1',
     graphRevision: graph.revisionId,
     nodeId: 'A',

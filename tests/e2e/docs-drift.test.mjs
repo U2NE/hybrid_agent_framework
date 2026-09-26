@@ -72,9 +72,13 @@ test('routing documentation stays semantically aligned with canonical Luna-first
   assert.match(leaseDoc, /\.transitions\.lock/);
   assert.match(leaseDoc, /atomic ledger replacement/i);
   assert.match(leaseDoc, /at most one terminal outcome/i);
-  assert.match(leaseDoc, /Terminal records persist the sealed graph `descriptorHash`/i);
-  assert.match(leaseDoc, /validates that descriptor hash, revision, executable agent node, and effect policy/i);
+  assert.match(leaseDoc, /Terminal records persist only the sealed graph `descriptorHash` and non-secret `leaseId`/i);
+  assert.match(leaseDoc, /validates descriptor hash, lease ID, revision, executable agent node, attempt, and effect policy/i);
   assert.match(leaseDoc, /completion from an older graph revision never marks the current revision complete/i);
+  assert.match(leaseDoc, /new terminal transition requires the active durable dispatch authorization/i);
+  assert.match(leaseDoc, /non-secret `leaseId`/i);
+  assert.match(leaseDoc, /lease token and full capability\/task contract are never copied/i);
+  assert.match(leaseDoc, /released authorization may only replay the exact terminal transition/i);
   assert.match(leaseDoc, /initial run graph binding/i);
   assert.match(leaseDoc, /concurrent identical G1 bindings converge/i);
   assert.match(leaseDoc, /conflicting descriptors produce one winner and one `GRAPH_FENCED` loser/i);

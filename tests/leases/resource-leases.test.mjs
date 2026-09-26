@@ -44,6 +44,7 @@ async function commitCompletionProof(root, graph, authorization) {
   const runStore = new ExecutionRunStore(root, graph.runId);
   await runStore.initializeGraph(graph);
   const committed = await runStore.commitTransition({
+    authorization,
     transitionId: 'complete-' + authorization.attemptId,
     graphRevision: authorization.graphRevision,
     nodeId: authorization.taskId,

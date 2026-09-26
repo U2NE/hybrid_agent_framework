@@ -7,6 +7,7 @@ import {
 } from '../execution-graph/index.mjs';
 import {
   LEASE_RELEASE_PROOF_SCHEMA,
+  ResourceLeaseError,
   ResourceLeaseStore,
 } from '../leases/index.mjs';
 
@@ -327,6 +328,7 @@ export class ExecutionRunStore {
     }
 
     const committed = await this.commitTransition({
+      authorization,
       transitionId,
       graphRevision: authorization.graphRevision,
       nodeId: authorization.taskId,
@@ -552,6 +554,17 @@ export class ExecutionRunStore {
   }
 
   async #commitTransition(input) {
+    if (
+      TERMINAL_TRANSITION_KINDS.has(input?.kind) &&
+      (!input?.authorization || typeof input.authorization !== 'object')
+    ) {
+      throw new TransitionError(
+        'terminal transition requires a durable dispatch authorization',
+        'TERMINAL_TRANSITION_AUTHORIZATION_REQUIRED',
+        { transitionId: input?.transitionId ?? null }
+      );
+    }
+
     const record = buildTransitionRecord(this.runId, input);
     if (isTerminalTransition(record) && !record.evidenceRefs.length) {
       throw new TransitionError(
@@ -567,37 +580,79 @@ export class ExecutionRunStore {
     await fs.mkdir(this.runDir, { recursive: true });
 
     if (isTerminalTransition(record)) {
+      const authorization = input.authorization;
       const leaseStore = new ResourceLeaseStore(this.projectRoot, this.runId);
-      return leaseStore.withGraphRevisionFence(async () => {
-        const graph = await this.loadGraph();
-        if (
-          record.descriptorHash !== graph.descriptorHash ||
-          record.graphRevision !== graph.revisionId
-        ) {
-          const existing = await this.loadTransitions();
-          const prior = existing.find(
-            (item) => item.transitionId === record.transitionId
+      return leaseStore.withGraphRevisionFence(async ({ activeLeases }) => {
+        let authorizationGraph;
+        try {
+          authorizationGraph = await this.loadGraphRevision(
+            authorization.descriptorHash
           );
-          if (prior) {
-            if (prior.requestFingerprint !== record.requestFingerprint) {
-              throw new TransitionError(
-                'transition id was reused with a different request fingerprint',
-                'TRANSITION_FENCED',
-                {
-                  transitionId: record.transitionId,
-                  existingFingerprint: prior.requestFingerprint,
-                  attemptedFingerprint: record.requestFingerprint,
-                }
-              );
-            }
-            return {
-              status: 'replayed',
-              record: prior,
-              path: this.transitionsPath,
-            };
+          await leaseStore.assertAuthorization(
+            authorizationGraph,
+            authorization,
+            { allowReleased: true }
+          );
+        } catch (error) {
+          if (
+            error instanceof ResourceLeaseError ||
+            error instanceof TransitionError
+          ) {
+            throw new TransitionError(
+              'terminal transition dispatch authorization is invalid',
+              'TERMINAL_TRANSITION_AUTHORIZATION_INVALID',
+              {
+                transitionId: record.transitionId,
+                causeCode: error.code ?? 'UNKNOWN',
+              }
+            );
           }
+          throw error;
         }
 
+        validateTerminalTransitionAgainstAuthorization(
+          record,
+          authorization
+        );
+
+        const existing = await this.loadTransitions();
+        const prior = existing.find(
+          (item) => item.transitionId === record.transitionId
+        );
+        if (prior) {
+          if (prior.requestFingerprint !== record.requestFingerprint) {
+            throw new TransitionError(
+              'transition id was reused with a different request fingerprint',
+              'TRANSITION_FENCED',
+              {
+                transitionId: record.transitionId,
+                existingFingerprint: prior.requestFingerprint,
+                attemptedFingerprint: record.requestFingerprint,
+              }
+            );
+          }
+          return {
+            status: 'replayed',
+            record: prior,
+            path: this.transitionsPath,
+          };
+        }
+
+        const activeLease = activeLeases.find(
+          (lease) => lease.leaseId === authorization.leaseId
+        );
+        if (!activeLease) {
+          throw new TransitionError(
+            'new terminal transition requires an active durable lease',
+            'TERMINAL_TRANSITION_AUTHORIZATION_INACTIVE',
+            {
+              transitionId: record.transitionId,
+              leaseId: authorization.leaseId,
+            }
+          );
+        }
+
+        const graph = await this.loadGraph();
         validateTerminalTransitionAgainstGraph(record, graph);
         return this.#commitRecord(record);
       });
@@ -749,10 +804,15 @@ export function buildTransitionRecord(runId, input = {}) {
     input.descriptorHash ??
     input.request?.descriptorHash ??
     null;
+  const leaseId =
+    input.leaseId ??
+    input.request?.leaseId ??
+    null;
   const requestFingerprint =
     input.requestFingerprint ||
     transitionRequestFingerprint({
       descriptorHash,
+      leaseId,
       graphRevision,
       nodeId,
       attemptId,
@@ -770,6 +830,7 @@ export function buildTransitionRecord(runId, input = {}) {
     attemptId,
     kind,
     descriptorHash,
+    leaseId,
     effectPolicy: input.effectPolicy ?? null,
     requestFingerprint,
     evidenceRefs,
@@ -816,6 +877,9 @@ function validateTransitionForLeaseRelease(transition, authorization) {
   if (transition.descriptorHash !== authorization.descriptorHash) {
     errors.push('descriptorHash mismatch');
   }
+  if (transition.leaseId !== authorization.leaseId) {
+    errors.push('leaseId mismatch');
+  }
   if (transition.graphRevision !== authorization.graphRevision) {
     errors.push('graphRevision mismatch');
   }
@@ -848,6 +912,44 @@ function validateTransitionForLeaseRelease(transition, authorization) {
       'LEASE_RELEASE_TRANSITION_INVALID',
       {
         transitionId: transition.transitionId,
+        errors,
+      }
+    );
+  }
+  return true;
+}
+
+function validateTerminalTransitionAgainstAuthorization(
+  record,
+  authorization
+) {
+  const errors = [];
+  if (record.runId !== authorization.runId) errors.push('runId mismatch');
+  if (record.descriptorHash !== authorization.descriptorHash) {
+    errors.push('descriptorHash mismatch');
+  }
+  if (record.leaseId !== authorization.leaseId) {
+    errors.push('leaseId mismatch');
+  }
+  if (record.graphRevision !== authorization.graphRevision) {
+    errors.push('graphRevision mismatch');
+  }
+  if (record.nodeId !== authorization.taskId) errors.push('task mismatch');
+  if (record.attemptId !== authorization.attemptId) {
+    errors.push('attempt mismatch');
+  }
+  if (record.effectPolicy !== authorization.effectPolicy) {
+    errors.push('effectPolicy mismatch');
+  }
+
+  if (errors.length) {
+    throw new TransitionError(
+      'terminal transition does not match its dispatch authorization: ' +
+        errors.join('; '),
+      'TERMINAL_TRANSITION_AUTHORIZATION_MISMATCH',
+      {
+        transitionId: record.transitionId,
+        leaseId: authorization.leaseId,
         errors,
       }
     );
@@ -1077,6 +1179,12 @@ function validateTransitionRecord(record, expectedRunId) {
     )
   ) {
     errors.push('terminal transition missing descriptorHash');
+  }
+  if (
+    isTerminalTransition(record) &&
+    (typeof record?.leaseId !== 'string' || !record.leaseId)
+  ) {
+    errors.push('terminal transition missing leaseId');
   }
   if (
     typeof record?.requestFingerprint === 'string' &&

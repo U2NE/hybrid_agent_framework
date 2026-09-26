@@ -520,6 +520,18 @@ async function assertReleaseProofBackedByLedger(runDir, proof, lease) {
       );
     }
 
+    if (
+      ['task_completed', 'recovered_task_completed', 'task_aborted_reconciled']
+        .includes(record.kind) &&
+      (typeof record.leaseId !== 'string' || !record.leaseId)
+    ) {
+      throw new ResourceLeaseError(
+        'durable terminal transition is missing its lease identity',
+        'LEASE_RELEASE_LEDGER_CORRUPT',
+        { line: index + 1, transitionsPath }
+      );
+    }
+
     const prior = seen.get(record.transitionId);
     if (prior && prior.requestFingerprint !== record.requestFingerprint) {
       throw new ResourceLeaseError(
@@ -548,6 +560,7 @@ async function assertReleaseProofBackedByLedger(runDir, proof, lease) {
   if (matched.descriptorHash !== lease.descriptorHash) {
     errors.push('descriptorHash mismatch');
   }
+  if (matched.leaseId !== lease.leaseId) errors.push('leaseId mismatch');
   if (matched.graphRevision !== lease.graphRevision) errors.push('graphRevision mismatch');
   if (matched.nodeId !== lease.taskId) errors.push('task mismatch');
   if (matched.attemptId !== lease.attemptId) errors.push('attempt mismatch');

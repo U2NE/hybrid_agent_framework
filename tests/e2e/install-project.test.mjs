@@ -120,8 +120,12 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(executeSkill, /hybrid lease abort/);
   assert.match(executeSkill, /ExecutionRunStore\.releaseTaskLease/);
   assert.match(executeSkill, /Terminal transitions are cross-process fenced/);
-  assert.match(executeSkill, /terminal record must carry the sealed graph `descriptorHash`/i);
+  assert.match(executeSkill, /Persist only the non-secret `leaseId` plus sealed `descriptorHash`/i);
   assert.match(executeSkill, /recovery must not reuse completion evidence from an older graph revision/i);
+  assert.match(executeSkill, /Terminal commit must receive the task's durable dispatch authorization/);
+  assert.match(executeSkill, /Persist only the non-secret `leaseId`/);
+  assert.match(executeSkill, /never copy the lease token or full authorization/);
+  assert.match(executeSkill, /released authorization may replay only its exact existing terminal transition/i);
   await assert.rejects(fs.access(path.join(target, '.codex', 'skills', 'hybrid', 'SKILL.md')));
 
   const role = await fs.readFile(path.join(target, '.codex', 'agents', 'hybrid-scout.toml'), 'utf8');
@@ -152,6 +156,9 @@ test('project installer succeeds without Codex CLI and preserves project-owned c
   assert.match(installedAgents, /task_aborted_reconciled/);
   assert.match(installedAgents, /only one terminal outcome is permitted per descriptor\/revision\/task\/attempt/);
   assert.match(installedAgents, /stale-revision completion is not recovery authority/);
+  assert.match(installedAgents, /created with the task dispatch authorization/);
+  assert.match(installedAgents, /New terminal creation requires the durable lease to still be active/);
+  assert.match(installedAgents, /Never persist the lease token or full authorization/);
   assert.match(installedAgents, /per-run durable model budget/);
   assert.match(installedAgents, /default automatic cap is 3 unique Sol stage-attempts per run/);
   assert.match(installedAgents, /MUST NOT self-issue or fabricate a model-budget approval receipt/);

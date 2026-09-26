@@ -91,6 +91,7 @@ test('lease CLI acquires verifies lists and releases a sealed task authorization
   );
 
   const terminal = await runStore.commitTransition({
+    authorization: acquired.authorization,
     transitionId: 'complete-A-attempt-1',
     graphRevision: graph.revisionId,
     nodeId: 'A',
